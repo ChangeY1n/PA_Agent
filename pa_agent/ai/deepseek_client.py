@@ -177,9 +177,17 @@ def _completion_max_tokens(
     extra_body: dict[str, Any],
     effort: str | None,
 ) -> int:
-    """Total completion budget (thinking + content) for OpenAI-compatible APIs."""
+    """Total completion budget (thinking + content) for OpenAI-compatible APIs.
+
+    Honors user-configured ``max_completion_tokens`` as a floor; we still cap at
+    the gateway-specific hard limit so the API does not 400.
+    """
     del effort, extra_body
-    return _provider_max_output_tokens(settings)
+    cap = _provider_max_output_tokens(settings)
+    user_cap = getattr(settings, "max_completion_tokens", 0) or 0
+    if user_cap > 0:
+        return min(cap, user_cap)
+    return cap
 
 
 def _resolve_thinking_params(

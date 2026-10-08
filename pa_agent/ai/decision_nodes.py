@@ -2211,15 +2211,27 @@ def merge_program_nodes_head(
 
         replaced_ids.add(nid)
 
-    # Sort new nodes by node_id then prepend before the AI's existing nodes so
-    # injected program nodes appear in chapter order, while the AI's terminating
-    # node (answer=否/等待) remains at the end of the trace.
-    new_nodes = sorted(
-        [node for nid, node in prog_by_id.items() if nid not in replaced_ids],
+    new_nodes = [node for nid, node in prog_by_id.items() if nid not in replaced_ids]
+
+    if not new_nodes:
+        return result
+
+    # Keep the AI's terminating node (last entry) at the tail so the decision
+    # path reads in chapter order up to the stop node.  Merge new program nodes
+    # into the non-terminal portion and sort by chapter-section order so that
+    # e.g. injected §2.5 lands after §1.x rather than being prepended before §0.x.
+    if result:
+        terminal = result[-1:]
+        non_terminal = result[:-1] + new_nodes
+    else:
+        terminal = []
+        non_terminal = new_nodes
+
+    non_terminal.sort(
         key=lambda x: _node_id_sort_key(str(x.get("node_id", ""))) if isinstance(x, dict) else (999, 999, ""),
     )
 
-    return new_nodes + result
+    return non_terminal + terminal
 
 
 

@@ -37,3 +37,9 @@ experience/**/*
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# ── Batch analysis artifacts & local stock lists ──────────────────────────────
+batch_analysis_results/
+batch_results/
+my_stocks.txt
+test_stocks.txt

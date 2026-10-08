@@ -113,7 +113,7 @@ def _collect_detected_pattern_tags(stage1_json: dict[str, Any]) -> list[str]:
     text = f"{blob} {risk}"
     for keywords, tag in _PATTERN_KEYWORD_TAGS:
         if tag == "h1":
-            if any(k in text for k in ("h1", "h2", "l1", "l2", "计数")):
+            if any(k in text for k in ("h1", "h2", "l1", "l2", "计数入场")):
                 for hl in ("h1", "h2", "l1", "l2"):
                     if hl in text and hl not in seen:
                         seen.add(hl)
@@ -155,7 +155,7 @@ def validate_detected_patterns_vs_key_signals(stage1: dict[str, Any]) -> list[st
 
     for keywords, required in _PATTERN_KEYWORD_TAGS:
         if required == "h1":
-            if any(k in text for k in ("h1", "h2", "l1", "l2", "计数")):
+            if any(k in text for k in ("h1", "h2", "l1", "l2", "计数入场")):
                 if not patterns.intersection(_HL_PATTERN_KEYWORDS.keys()):
                     errors.append(
                         "key_signals mentions H1/H2/L1/L2 count setup but "

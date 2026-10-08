@@ -261,6 +261,34 @@ def _balance_json_brackets(text: str) -> str:
     return text + closers
 
 
+def _inject_stage2_truncated_stubs(obj: dict[str, Any]) -> dict[str, Any]:
+    """Inject minimal required fields that are missing from a truncated stage2 response.
+
+    When truncation happens inside ``decision_trace`` the tail fields (terminal,
+    next_bar_prediction, next_cycle_prediction) are absent.  Inject stubs so
+    that downstream validation can report a meaningful warning instead of
+    a hard "required property missing" schema error.
+
+    Only ``terminal`` is required by the schema; the others are optional but
+    injected for UI completeness when missing.
+    """
+    if "terminal" not in obj:
+        obj["terminal"] = {
+            "node_id": "AUTO",
+            "outcome": "wait",
+            "label": "响应截断，程序自动降级为等待（请重新提交分析）",
+        }
+    if "next_bar_prediction" not in obj:
+        obj["next_bar_prediction"] = {
+            "unpredictable": True,
+            "direction": None,
+            "probabilities": None,
+            "reasoning": "响应截断，无法预测下一根K线方向",
+            "features_used": [],
+        }
+    return obj
+
+
 def _inject_stage2_no_json_stub(raw_text: str) -> str | None:
     """When stage2 content is pure prose (model forgot to output JSON),
     return a minimal 不下单 JSON stub so downstream validation can continue
@@ -314,27 +342,66 @@ def _inject_stage2_no_json_stub(raw_text: str) -> str | None:
     return _balance_json_brackets(tail)
 
 
+def _close_open_string(text: str) -> str:
+    """If *text* ends while inside an unterminated JSON string, append a closing quote.
+
+    Tracks quote/backslash-escape state so that ``\\"`` inside a value is not
+    mistaken for a closing quote.  Returns *text* unchanged when not in a string.
+    """
+    in_string = False
+    escape = False
+    for ch in text:
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+    return text + '"' if in_string else text
+
+
 def _try_repair_json_syntax(
     text: str,
     stage: Literal["stage1", "stage2"],
     *,
     allow_tail_inject: bool = False,
 ) -> str | None:
-    """Return repaired JSON text when truncation caused a syntax error, else None."""
+    """Return repaired JSON text when truncation caused a syntax error, else None.
+
+    Attempts two strategies in order:
+    1. Balance unclosed brackets/braces (truncation between complete values).
+    2. Close an unterminated string then balance (truncation mid-string-value).
+    """
     if not text.strip().startswith("{"):
         return None
 
     candidate = text.rstrip()
     if stage == "stage1" and allow_tail_inject:
         candidate = _inject_stage1_missing_tail(candidate)
-    candidate = _balance_json_brackets(candidate)
-    if candidate == text.rstrip():
-        return None
-    try:
-        json.loads(candidate)
-    except json.JSONDecodeError:
-        return None
-    return candidate
+
+    # Strategy 1: balance brackets only
+    balanced = _balance_json_brackets(candidate)
+    if balanced != candidate:
+        try:
+            json.loads(balanced)
+            return balanced
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 2: close open string then balance (handles "Unterminated string" errors)
+    with_str_closed = _close_open_string(candidate)
+    if with_str_closed != candidate:
+        balanced2 = _balance_json_brackets(with_str_closed)
+        try:
+            json.loads(balanced2)
+            return balanced2
+        except json.JSONDecodeError:
+            pass
+
+    return None
 
 
 # ── JsonValidator ─────────────────────────────────────────────────────────────
@@ -409,25 +476,29 @@ class JsonValidator:
         try:
             obj = json.loads(stripped)
         except json.JSONDecodeError as exc:
-            # Stage 2: fail fast on syntax errors (no silent truncation repair).
+            # Attempt truncation repair for both stages.
+            # Stage 1 tail-inject (gate_trace stub) requires explicit opt-in via
+            # disable_truncation_repair=False in settings.  Plain bracket/string
+            # balancing is always attempted since it preserves all critical fields
+            # (decision, terminal, bar_analysis) that appear before the tail.
             allow_inject = (
                 stage == "stage1"
                 and not getattr(self._validation, "disable_truncation_repair", True)
             )
-            repaired = (
-                _try_repair_json_syntax(stripped, stage, allow_tail_inject=allow_inject)
-                if stage == "stage1"
-                else None
-            )
+            repaired = _try_repair_json_syntax(stripped, stage, allow_tail_inject=allow_inject)
             if repaired is not None:
                 try:
                     obj = json.loads(repaired)
-                    logger.warning(
-                        "Repaired truncated %s JSON (%d -> %d chars)",
+                    logger.info(
+                        "Repaired truncated %s JSON (%d -> %d chars); "
+                        "fallback fields injected if needed.",
                         stage,
                         len(stripped),
                         len(repaired),
                     )
+                    # Inject stubs for tail fields that were cut off before being written
+                    if stage == "stage2" and isinstance(obj, dict):
+                        obj = _inject_stage2_truncated_stubs(obj)
                 except json.JSONDecodeError:
                     repaired = None
             if repaired is None:

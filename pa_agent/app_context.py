@@ -25,6 +25,8 @@ class AppContext:
     pending_writer: Any = None    # PendingWriter
     exp_reader: Any = None        # ExperienceReader
     ledger: Any = None            # SessionTokenLedger
+    csv_logger: Any = None        # DecisionCSVLogger
+    excel_logger: Any = None      # DecisionExcelLogger
 
     @classmethod
     def bootstrap(cls) -> "AppContext":
@@ -64,6 +66,15 @@ class AppContext:
             getattr(settings.general, "last_data_source", "mt5")
         )
         data_source = create_data_source(ds_kind)
+
+        # 通达信：应用设置中的安装目录（股票下拉列表读取自选股用）
+        if ds_kind == "tdx":
+            from pa_agent.data.tdx_source import TDXSource
+
+            if isinstance(data_source, TDXSource):
+                data_source.set_tdx_dir(
+                    getattr(settings.general, "tdx_install_dir", "") or None
+                )
 
         # Subscribe to the last-used symbol/timeframe from settings
         try:
@@ -116,6 +127,22 @@ class AppContext:
             warn_pct=settings.general.context_warning_threshold_pct,
         )
 
+        # ── CSV logger ────────────────────────────────────────────────────────
+        from pa_agent.records.decision_csv_logger import DecisionCSVLogger
+
+        csv_enabled = getattr(settings.general, "enable_decision_csv_logging", True)
+        csv_path = getattr(settings.general, "decision_csv_path", "records/trading_decisions.csv")
+        csv_logger = DecisionCSVLogger(csv_path=csv_path, enabled=csv_enabled)
+
+        # ── Excel logger ──────────────────────────────────────────────────────
+        from pa_agent.records.decision_excel_logger import DecisionExcelLogger
+
+        excel_enabled = getattr(settings.general, "enable_decision_excel_logging", True)
+        excel_path = getattr(
+            settings.general, "decision_excel_path", "records/trading_decisions.xlsx"
+        )
+        excel_logger = DecisionExcelLogger(xlsx_path=excel_path, enabled=excel_enabled)
+
         return cls(
             settings=settings,
             logger=app_logger,
@@ -128,4 +155,6 @@ class AppContext:
             pending_writer=pending_writer,
             exp_reader=exp_reader,
             ledger=ledger,
+            csv_logger=csv_logger,
+            excel_logger=excel_logger,
         )

@@ -34,6 +34,8 @@ if TYPE_CHECKING:
     from pa_agent.config.settings import Settings
     from pa_agent.records.experience_reader import ExperienceReader
     from pa_agent.records.pending_writer import PendingWriter
+    from pa_agent.records.decision_csv_logger import DecisionCSVLogger
+    from pa_agent.records.decision_excel_logger import DecisionExcelLogger
 
 from pa_agent.ai.json_validator import Ok, ValidationError
 from pa_agent.data.base import KlineFrame
@@ -50,6 +52,23 @@ def _latency_ms_label(latency_ms: object) -> str:
         return f"{float(latency_ms):.0f}ms"
     except (TypeError, ValueError):
         return "?"
+
+
+def _log_call_token_stats(stage: str, reply: Any) -> None:
+    """INFO-level per-call token stats so reasoning-vs-content starvation is visible."""
+    try:
+        usage = getattr(reply, "usage", None)
+        prompt = getattr(usage, "prompt_tokens", 0) or 0
+        completion = getattr(usage, "completion_tokens", 0) or 0
+        reasoning_len = len(getattr(reply, "reasoning_content", None) or "")
+        content_len = len(getattr(reply, "content", None) or "")
+        logger.info(
+            "[%s tokens] prompt=%d completion=%d reasoning_chars=%d content_chars=%d ratio=%.2f",
+            stage, prompt, completion, reasoning_len, content_len,
+            (reasoning_len / max(content_len, 1)),
+        )
+    except Exception:
+        logger.debug("[%s tokens] logging skipped (missing fields)", stage, exc_info=True)
 
 # When the gateway buffers the full reply, emit pseudo-stream chunks to the UI.
 _FALLBACK_STREAM_CHUNK = 48
@@ -282,6 +301,10 @@ class TwoStageOrchestrator:
     settings:
         Optional Settings object; used for ``ai_provider`` meta and
         ``reasoning_effort`` forwarding.
+    csv_logger:
+        Optional DecisionCSVLogger for logging trading decisions to CSV.
+    excel_logger:
+        Optional DecisionExcelLogger for logging trading decisions to .xlsx.
     """
 
     def __init__(
@@ -293,6 +316,8 @@ class TwoStageOrchestrator:
         pending_writer: "PendingWriter",
         exp_reader: "ExperienceReader",
         settings: Optional["Settings"] = None,
+        csv_logger: Optional["DecisionCSVLogger"] = None,
+        excel_logger: Optional["DecisionExcelLogger"] = None,
     ) -> None:
         self._client = client
         self._assembler = assembler
@@ -301,6 +326,8 @@ class TwoStageOrchestrator:
         self._pending_writer = pending_writer
         self._exp_reader = exp_reader
         self._settings = settings
+        self._csv_logger = csv_logger
+        self._excel_logger = excel_logger
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -476,6 +503,7 @@ class TwoStageOrchestrator:
             reply_s1.usage.completion_tokens,
             _latency_ms_label(reply_s1.latency_ms),
         )
+        _log_call_token_stats("stage1", reply_s1)
         logger.debug("="*80 + "\n")
 
         prev_s1: dict[str, Any] | None = None
@@ -734,6 +762,7 @@ class TwoStageOrchestrator:
             reply_s2.usage.completion_tokens,
             _latency_ms_label(reply_s2.latency_ms),
         )
+        _log_call_token_stats("stage2", reply_s2)
         logger.debug("="*80 + "\n")
 
         result_s2 = self._validator.validate(
@@ -834,6 +863,20 @@ class TwoStageOrchestrator:
 
         # ── Step 22: Persist full record ──────────────────────────────────────
         self._pending_writer.save_full(record)
+
+        # ── Step 22.5: Log decision to CSV if enabled ─────────────────────────
+        if self._csv_logger is not None:
+            try:
+                self._csv_logger.log_decision(record)
+            except Exception as exc:
+                logger.warning("CSV logging failed: %s", exc)
+
+        # ── Step 22.6: Log decision to Excel if enabled ───────────────────────
+        if self._excel_logger is not None:
+            try:
+                self._excel_logger.log_decision(record)
+            except Exception as exc:
+                logger.warning("Excel logging failed: %s", exc)
 
         # ── Step 23: Record saved event ───────────────────────────────────────
         on_event(OrchestratorEvent.RecordSaved)

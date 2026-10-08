@@ -227,6 +227,123 @@ def _coerce_decision_when_trade_metrics_fail(
     return True
 
 
+# Reused by _coerce_terminal_when_no_entry_plan to detect a *genuine* §14 violation.
+# Mirrors the same denial-phrase guard in decision_tree.validate_stage2_trace_consistency
+# so the auto-fix and the validator agree on what counts as a real §14 hit.
+_SECTION14_DENIAL_PHRASES = (
+    "未触犯", "未违反", "无触犯", "无违规", "通过扫描", "扫描通过", "无禁止", "未触发",
+)
+
+
+def _section14_actually_violated(trace: Any) -> bool:
+    """True iff a §14 node has answer=是 AND its reason does not contain a denial phrase.
+
+    Many models write ``answer=是`` to mean "I completed the scan" — those are
+    false positives.  The genuine violation case has answer=是 AND a reason that
+    describes the actual prohibited behavior (e.g. "触犯：宽通道中追突破").
+    """
+    if not isinstance(trace, list):
+        return False
+    for item in trace:
+        if not isinstance(item, dict):
+            continue
+        nid = str(item.get("node_id", "")).strip()
+        if not nid.startswith("14"):
+            continue
+        if str(item.get("answer", "")).strip() != "是":
+            continue
+        reason = str(item.get("reason", "") or "")
+        if any(p in reason for p in _SECTION14_DENIAL_PHRASES):
+            continue
+        return True
+    return False
+
+
+def _coerce_terminal_when_no_entry_plan(out: dict[str, Any]) -> bool:
+    """Auto-fix the "no entry plan yet terminal=reject" anti-pattern.
+
+    The model frequently writes ``terminal.outcome=reject / node_id=10.3`` for
+    ANY no-trade case, but the validator's rule (decision_tree.py
+    ``validate_stage2_trace_consistency``) only allows ``reject`` when a real
+    trade plan existed for the trader equation to evaluate.  When
+    §9.0=否/等待 (no signal bar) or §10.1=否 (no stop-loss anchor), there is
+    nothing to reject — the correct semantic is ``outcome=wait``.
+
+    Auto-fix behaviour:
+      * Detect: ``order_type=不下单`` AND §9.0=否/等待 OR §10.1=否
+                AND ``terminal.outcome=reject``
+                AND §14 is NOT a genuine violation.
+      * Action: ``terminal.outcome`` → ``"wait"``;
+                ``terminal.node_id`` → ``"9.0"`` if §9.0=否, else ``"10.1"``;
+                ``terminal.label`` → standardized "§X=否,无入场方案,等待"
+                (only if model label is empty or still contains the old
+                 "reject"/"方程不通过" wording).
+
+    Exception: when §14 is genuinely violated, ``outcome=reject`` is the
+    correct semantic (a prohibition explicitly terminated the analysis),
+    so this function leaves that case untouched.
+
+    Returns True iff a change was applied.
+    """
+    decision = out.get("decision")
+    terminal = out.get("terminal")
+    if not isinstance(decision, dict) or not isinstance(terminal, dict):
+        return False
+    if decision.get("order_type") != "不下单":
+        return False
+
+    outcome = str(terminal.get("outcome", "") or "").strip()
+    if outcome != "reject":
+        return False  # already "wait"/"trade"/"proceed" — no fix needed
+
+    trace = out.get("decision_trace")
+    if not isinstance(trace, list):
+        return False
+
+    # §14 genuine violation takes precedence — leave outcome=reject alone.
+    if _section14_actually_violated(trace):
+        return False
+
+    # Find the earliest entry-plan negative node.
+    target_node: str | None = None
+    for item in trace:
+        if not isinstance(item, dict):
+            continue
+        nid = str(item.get("node_id", "")).strip()
+        ans = str(item.get("answer", "") or "").strip()
+        if nid == "9.0" and ans in ("否", "等待"):
+            target_node = "9.0"
+            break  # §9.0 is the earliest — stop searching
+        if nid == "10.1" and ans == "否" and target_node is None:
+            target_node = "10.1"
+            # keep looking in case §9.0 appears later (shouldn't, but defensive)
+
+    if target_node is None:
+        return False  # not the anti-pattern we handle
+
+    old_outcome = terminal.get("outcome")
+    old_nid = terminal.get("node_id")
+    terminal["outcome"] = "wait"
+    terminal["node_id"] = target_node
+
+    # Refresh label only if the model left it as the old reject wording,
+    # so we don't clobber a more informative user-written label.
+    old_label = str(terminal.get("label", "") or "").strip()
+    if (
+        not old_label
+        or "方程" in old_label
+        or "reject" in old_label.lower()
+        or "拒绝" in old_label
+    ):
+        terminal["label"] = f"§{target_node}=否,无入场方案,等待"
+
+    logger.debug(
+        "Coerced terminal no_entry_plan: outcome %s->%s, node_id %s->%s",
+        old_outcome, terminal["outcome"], old_nid, terminal["node_id"],
+    )
+    return True
+
+
 def _normalize_next_cycle_prediction(prediction: dict[str, Any]) -> None:
     """In-place normalize next_cycle_prediction common model quirks. Idempotent."""
     from pa_agent.ai.cycle_enums import CYCLE_ORDER
@@ -464,6 +581,7 @@ def normalize_stage2(
             decision.get("entry_basis_bar"),
         )
     _coerce_decision_when_trade_metrics_fail(out, decision_stance=decision_stance)
+    _coerce_terminal_when_no_entry_plan(out)
 
     # ── DecisionNodeEngine: fill §9.1/§9.2/§9.3/§9.5/§11 ─────────────────────
     if kline_frame is not None:

@@ -86,10 +86,25 @@ _STAGE1_TAIL_REMINDER = (
 
 _STAGE2_TAIL_REMINDER = (
     "【最后一步·必做】思考结束后，立即在 assistant 正文 `content` 输出完整阶段二裸 JSON"
-    "（含 decision、decision_trace、terminal）。思考用简体中文并尽量简洁；`content` 不得为空。"
+    "（含 decision、diagnosis_summary、bar_analysis、decision_trace、terminal、"
+    "next_bar_prediction、next_cycle_prediction）。思考用简体中文并尽量简洁；`content` 不得为空。"
     "若 token 紧张，优先保证 `content` 有 JSON，可缩短思考。\n"
     "⚠️ 禁止在 content 中只写思考过程或分隔符（如 ---输出JSON---）而不附 JSON——"
-    "这会导致校验直接失败。哪怕只输出最小骨架 {\"decision\":{\"order_type\":\"不下单\",...}} 也比没有强。"
+    "这会导致校验直接失败。哪怕只输出最小骨架 {\"decision\":{\"order_type\":\"不下单\",...}} 也比没有强。\n"
+    "【顺序保险】建议按以下顺序写入 JSON 字段，避免尾部字段被截断：\n"
+    "  1) terminal（最先写出，让最终态锁定）\n"
+    "  2) decision（含 order_type / entry_price / 止损止盈）\n"
+    "  3) diagnosis_summary / bar_analysis（短摘要即可）\n"
+    "  4) decision_trace（数组，按章节顺序写；每条 reason 控制在 80 字内）\n"
+    "  5) next_bar_prediction / next_cycle_prediction（每段 reasoning 不超过 200 字）\n"
+    "【reason 长度硬约束】decision_trace 每条 reason ≤ 80 字；key_factors/watch_points 各 3-5 条短词组；"
+    "diagnosis_confidence_reasoning ≤ 60 字；reasoning 字段均以「结论+一句依据」格式书写。\n"
+    "【terminal 硬规则·极常见错误】决策路径里出现 §9.0=否/等待 或 §10.1=否（根本无入场方案）时，"
+    "`terminal.outcome` **必须** 写 \"wait\"、`terminal.node_id` **必须** 写 \"9.0\"（若 §9.0=否/等待）或 \"10.1\"（若仅 §10.1=否）。\n"
+    "**禁止**在 §9.0=否/等待 或 §10.1=否 的情况下写 `outcome=\"reject\"` 和 `node_id=\"10.3\"`——"
+    "「拒绝」一个不存在的方案在语义上无意义，程序会校验失败。"
+    "仅当 §14 answer=是 且 reason 中无「未触犯/未违反/无触犯/通过扫描」等否定短语（即真正触犯禁止行为）时，"
+    "才允许 `outcome=\"reject\"`。"
 ).strip()
 
 # ── Hardcoded output format reminders ─────────────────────────────────────────
@@ -768,14 +783,28 @@ class PromptAssembler:
 
     # ── File loading ──────────────────────────────────────────────────────────
 
-    def _load(self, filename: str) -> str:
-        """Load a prompt file by name. Returns empty string on error."""
+    def _load(self, filename: str, max_chars: int | None = None) -> str:
+        """Load a prompt file by name. Returns empty string on error.
+
+        When *max_chars* is positive and the file exceeds it, keep the head
+        (rules/definition sections come first in every strategy file) and
+        append a marker so the model knows content was trimmed. This is a
+        structural guard against stage2 prompt bloat — it keeps output budget
+        for the final JSON instead of starving it.
+        """
         path = self._prompt_dir / filename
         try:
-            return path.read_text(encoding="utf-8")
+            text = path.read_text(encoding="utf-8")
         except OSError as exc:
             logger.error("Failed to load prompt file %s: %s", filename, exc)
             return f"[ERROR: could not load {filename}]"
+        if max_chars and max_chars > 0 and len(text) > max_chars:
+            kept = text[:max_chars].rstrip()
+            return (
+                f"{kept}\n\n[…以下内容已省略，文件 {filename} 超过 {max_chars} 字上限；"
+                f"如需细则请在阶段二提问中再行索取…]"
+            )
+        return text
 
     # ── K-line table rendering ────────────────────────────────────────────────
 
@@ -1251,18 +1280,23 @@ class PromptAssembler:
     ) -> list[dict]:
         """Build Stage 2 as a true continuation of the Stage 1 conversation.
 
-        Structure:
+        4-message structure (this is the natural multi-turn dialogue flow):
           [0] system    — Stage 2 system prompt (full decision tree, same as Stage 1)
           [1] user      — Stage 1 original user prompt (with K-line table, from stage1_messages)
-          [2] user      — Stage 2 task prompt (without K-line table; embeds S1 diagnosis JSON)
+          [2] assistant — Stage 1 model's raw reply (the validated stage1 JSON string)
+          [3] user      — Stage 2 task prompt (without K-line table; embeds S1 diagnosis JSON)
 
-        Note: the ``assistant`` role is intentionally omitted.  Including it would
-        make ``messages[2]`` (the S2 user turn) unique every cycle because the
-        prefix preceding it changes — the assistant content contains the S1 reply
-        JSON which varies each run.  Without the assistant message, the prefix is:
-          system (static) + user[S1] (static per symbol/tf/barcount)
-        and the S2 user turn only needs to re-send the dynamic diagnosis JSON,
-        keeping the large strategy-file block fully cached.
+        The middle ``assistant`` message is critical: without it, the model
+        sees ``[user(do S1), user(do S2)]`` and treats the S2 user turn as a
+        follow-up to the S1 user turn, producing stage-1 fields
+        (``cycle_position`` / ``gate_trace`` / ``bar_by_bar_summary``) instead
+        of stage-2 fields (``decision`` / ``decision_trace`` / ``terminal``).
+
+        Cost: the S2 user turn's prefix cache no longer hits (assistant content
+        varies each run).  The static S1 block (K-line table, geometry
+        features, stage-1 reminders) is still cached and reused.  The S1 reply
+        itself is small (~1-2K tokens) — far cheaper than the failure mode it
+        fixes (100% validation failure → user must manually resubmit).
         """
         system_content = self._build_stage2_system_prompt()
 
@@ -1272,6 +1306,17 @@ class PromptAssembler:
             if msg.get("role") == "user":
                 stage1_user_content = msg["content"]
                 break
+
+        # Stage 1 assistant content: the validated stage-1 JSON string.
+        # Fall back to a minimal placeholder if for any reason the orchestrator
+        # passed an empty string — the assistant slot must never be empty,
+        # otherwise the model loses the multi-turn anchor and reverts to
+        # producing stage-1 output in response to ``user(do S1)``.
+        if not (stage1_reply_content or "").strip():
+            import json as _json
+            stage1_reply_content = _json.dumps(
+                stage1_json, ensure_ascii=False
+            ) or "{}"
 
         # Stage 2 user prompt: include_kline_table=False → "沿用上一轮" fallback
         stage2_user_content = self._build_stage2_user_prompt(
@@ -1287,6 +1332,7 @@ class PromptAssembler:
         return [
             {"role": "system",    "content": system_content},
             {"role": "user",      "content": stage1_user_content},
+            {"role": "assistant", "content": stage1_reply_content},
             {"role": "user",      "content": stage2_user_content},
         ]
 
@@ -1304,16 +1350,21 @@ class PromptAssembler:
         """Build the Stage 2 task turn for standalone or continuation mode."""
         stance_block = build_decision_stance_guidance(normalize_stance(decision_stance))
         transition_block = self._render_transition_guidance(stage1_json)
+        # Strategy-file cap: each .txt may not exceed this many characters.
+        # Files in BASE_PROMPT_TXT_FILES (binary decision tree, terminology,
+        # stage-1 task txt) are NOT capped — they are mandatory scaffolding.
+        _file_cap_cfg = int(getattr(self._prompt_settings, "stage2_strategy_file_max_chars", 0) or 0)
+        _stage2_user_files = stage2_user_task_txt_files(
+            strategy_files,
+            direction=str(stage1_json.get("direction", "") or ""),
+            load_full_strategy_library=self._load_full_strategy_library(),
+        )
         stage2_parts = [
             stance_block,
             transition_block,
             *(
-                self._load(name)
-                for name in stage2_user_task_txt_files(
-                    strategy_files,
-                    direction=str(stage1_json.get("direction", "") or ""),
-                    load_full_strategy_library=self._load_full_strategy_library(),
-                )
+                self._load(name, max_chars=_file_cap_cfg or None)
+                for name in _stage2_user_files
             ),
         ]
         if experience_entries:
@@ -1364,6 +1415,24 @@ class PromptAssembler:
             kline_block += f"{breakout_tick_hint}\n\n"
         prev_pred_block = self._render_previous_prediction(previous_record)
         return (
+            "## 阶段切换 — 现在是阶段二\n\n"
+            "**阶段一已经完成并通过程序校验。** 上一条 assistant 消息就是阶段一的诊断 JSON"
+            "（含 `cycle_position` / `gate_trace` / `bar_by_bar_summary` 等），"
+            "**你不需要重新执行阶段一**。下方内嵌的阶段一诊断结果是供你查询的权威依据。\n\n"
+            "**禁止**在 `content` 中输出以下阶段一字段（已由上一条 assistant 消息提供，"
+            "再输出会导致阶段二 schema 校验失败）：\n"
+            "- `cycle_position` / `direction` / `diagnosis_confidence` / `market_phase`\n"
+            "- `detected_patterns` / `key_signals` / `htf_context` / `entry_setup` / `risk_warning`\n"
+            "- `gate_trace` / `gate_result` / `bar_by_bar_summary`\n\n"
+            "**必须**在 `content` 中输出以下阶段二字段（缺一即校验失败）：\n"
+            "- `decision`（含 order_type / entry_price / 止损止盈 / reasoning / 置信度）\n"
+            "- `diagnosis_summary`（短摘要：cycle_position / direction / key_signals）\n"
+            "- `bar_analysis`（阶段二版；**bar_type 必须与阶段一完全一致，不得重新推断**）\n"
+            "- `decision_trace`（每条 reason ≤ 80 字；bar_range 按节点实际使用的 K 线填写，"
+            "**禁止所有节点都填 `K1` 或同一字符串**）\n"
+            "- `terminal`（outcome 与 decision.order_type 一致）\n"
+            "- `next_bar_prediction` / `next_cycle_prediction`（附加预测，不影响下单）\n\n"
+            "---\n\n"
             "## 阶段二任务\n\n"
             "你现在独立执行阶段二：交易决策、风险收益和下单方式评估（基于阶段一诊断结果）。\n"
             "以下 JSON 是程序校验通过后的阶段一诊断结果，请以此为权威依据；阶段一 K 线数据见上方阶段一用户消息。\n\n"

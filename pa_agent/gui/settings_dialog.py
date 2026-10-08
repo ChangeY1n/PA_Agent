@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -177,6 +178,21 @@ class SettingsDialog(QDialog):
         self._last_timeframe_edit = QLineEdit()
         general_form.addRow("上次周期:", self._last_timeframe_edit)
 
+        tdx_dir_row = QHBoxLayout()
+        self._tdx_dir_edit = QLineEdit()
+        self._tdx_dir_edit.setPlaceholderText("留空自动探测，如 D:\\app2\\tdx")
+        self._tdx_dir_edit.setToolTip(
+            "通达信安装目录（需含 T0002/blocknew/zxg.blk 自选股文件）。\n"
+            "选择通达信 TDX 数据源后，股票下拉列表将包含自选股中的股票。\n"
+            "留空时自动探测常见安装目录。"
+        )
+        tdx_dir_row.addWidget(self._tdx_dir_edit, 1)
+        self._tdx_dir_browse_btn = QPushButton("浏览…")
+        self._tdx_dir_browse_btn.setFixedWidth(72)
+        self._tdx_dir_browse_btn.clicked.connect(self._on_browse_tdx_dir)
+        tdx_dir_row.addWidget(self._tdx_dir_browse_btn)
+        general_form.addRow("通达信目录:", tdx_dir_row)
+
         self._flow_auto_play_check = QCheckBox("决策树可视化生成后自动播放路径")
         general_form.addRow("决策树播放:", self._flow_auto_play_check)
 
@@ -204,6 +220,51 @@ class SettingsDialog(QDialog):
         self._decision_flow_play_handler: Callable[[], None] | None = None
 
         form_layout.addWidget(general_group)
+
+        # ── Decision log (CSV / Excel) ───────────────────────────────────────
+        log_group = QGroupBox("交易决策日志（自动追加开仓决策）")
+        log_form = QFormLayout(log_group)
+        log_form.setLabelAlignment(log_form.labelAlignment())
+
+        self._enable_csv_check = QCheckBox("记录到 CSV 文件")
+        self._enable_csv_check.setToolTip(
+            "勾选后，每次分析产生开仓决策（非「不下单」）时，会向 CSV 文件追加一行。"
+        )
+        log_form.addRow("CSV:", self._enable_csv_check)
+
+        csv_path_row = QHBoxLayout()
+        self._csv_path_edit = QLineEdit()
+        self._csv_path_edit.setPlaceholderText("records/trading_decisions.csv")
+        csv_path_row.addWidget(self._csv_path_edit, 1)
+        self._csv_browse_btn = QPushButton("浏览…")
+        self._csv_browse_btn.setFixedWidth(72)
+        self._csv_browse_btn.clicked.connect(self._on_browse_csv_path)
+        csv_path_row.addWidget(self._csv_browse_btn)
+        log_form.addRow("CSV 路径:", csv_path_row)
+
+        self._enable_excel_check = QCheckBox("记录到 Excel (.xlsx) 文件")
+        self._enable_excel_check.setToolTip(
+            "勾选后，每次分析产生开仓决策（非「不下单」）时，会向 Excel 工作簿追加一行。"
+            "支持在 Excel 中直接打开查看。文件被 Excel 占用时会自动重试。"
+        )
+        log_form.addRow("Excel:", self._enable_excel_check)
+
+        excel_path_row = QHBoxLayout()
+        self._excel_path_edit = QLineEdit()
+        self._excel_path_edit.setPlaceholderText("records/trading_decisions.xlsx")
+        excel_path_row.addWidget(self._excel_path_edit, 1)
+        self._excel_browse_btn = QPushButton("浏览…")
+        self._excel_browse_btn.setFixedWidth(72)
+        self._excel_browse_btn.clicked.connect(self._on_browse_excel_path)
+        excel_path_row.addWidget(self._excel_browse_btn)
+        log_form.addRow("Excel 路径:", excel_path_row)
+
+        self._open_log_dir_btn = QPushButton("打开日志所在文件夹")
+        self._open_log_dir_btn.setToolTip("在文件管理器中显示日志文件所在目录")
+        self._open_log_dir_btn.clicked.connect(self._on_open_log_dir)
+        log_form.addRow("", self._open_log_dir_btn)
+
+        form_layout.addWidget(log_group)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save
@@ -247,6 +308,7 @@ class SettingsDialog(QDialog):
             self._decision_stance_combo.setCurrentIndex(stance_idx)
         self._last_symbol_edit.setText(g.last_symbol)
         self._last_timeframe_edit.setText(g.last_timeframe)
+        self._tdx_dir_edit.setText(str(getattr(g, "tdx_install_dir", "")))
         self._flow_auto_play_check.setChecked(
             getattr(g, "decision_flow_auto_play", False)
         )
@@ -255,6 +317,18 @@ class SettingsDialog(QDialog):
         )
         self._flow_default_zoom_spin.setValue(
             int(getattr(g, "decision_flow_default_zoom_pct", 500))
+        )
+        self._enable_csv_check.setChecked(
+            bool(getattr(g, "enable_decision_csv_logging", True))
+        )
+        self._csv_path_edit.setText(
+            str(getattr(g, "decision_csv_path", "records/trading_decisions.csv"))
+        )
+        self._enable_excel_check.setChecked(
+            bool(getattr(g, "enable_decision_excel_logging", True))
+        )
+        self._excel_path_edit.setText(
+            str(getattr(g, "decision_excel_path", "records/trading_decisions.xlsx"))
         )
 
     @staticmethod
@@ -307,9 +381,44 @@ class SettingsDialog(QDialog):
         g.decision_stance = self._decision_stance_combo.currentData()  # type: ignore[assignment]
         g.last_symbol = self._last_symbol_edit.text().strip()
         g.last_timeframe = self._last_timeframe_edit.text().strip()
+        g.tdx_install_dir = self._tdx_dir_edit.text().strip()
         g.decision_flow_auto_play = self._flow_auto_play_check.isChecked()
         g.decision_flow_play_seconds = self._flow_play_seconds_spin.value()
         g.decision_flow_default_zoom_pct = self._flow_default_zoom_spin.value()
+        g.enable_decision_csv_logging = self._enable_csv_check.isChecked()
+        g.decision_csv_path = self._csv_path_edit.text().strip() or "records/trading_decisions.csv"
+        g.enable_decision_excel_logging = self._enable_excel_check.isChecked()
+        g.decision_excel_path = (
+            self._excel_path_edit.text().strip() or "records/trading_decisions.xlsx"
+        )
+
+        # Propagate to live loggers so the next write uses the new path/state
+        ctx = getattr(self.parent(), "_ctx", None) if self.parent() is not None else None
+        if ctx is not None:
+            csv_logger = getattr(ctx, "csv_logger", None)
+            if csv_logger is not None and hasattr(csv_logger, "set_enabled"):
+                csv_logger.set_enabled(g.enable_decision_csv_logging)
+            if csv_logger is not None and hasattr(csv_logger, "set_csv_path"):
+                csv_logger.set_csv_path(g.decision_csv_path)
+            excel_logger = getattr(ctx, "excel_logger", None)
+            if excel_logger is not None and hasattr(excel_logger, "set_enabled"):
+                excel_logger.set_enabled(g.enable_decision_excel_logging)
+            if excel_logger is not None and hasattr(excel_logger, "set_xlsx_path"):
+                excel_logger.set_xlsx_path(g.decision_excel_path)
+
+        # 通达信：目录变更后立即应用到当前数据源并刷新股票下拉列表（含自选股）
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "_populate_symbol_combo_for_source"):
+            ctx = getattr(parent, "_ctx", None)
+            tdx_source = getattr(ctx, "data_source", None) if ctx is not None else None
+            if (
+                tdx_source is not None
+                and hasattr(tdx_source, "set_tdx_dir")
+                and hasattr(parent, "_current_data_source_kind")
+                and parent._current_data_source_kind() == "tdx"
+            ):
+                tdx_source.set_tdx_dir(g.tdx_install_dir or None)
+                parent._populate_symbol_combo_for_source()
 
         save_settings(self._settings, SETTINGS_JSON_PATH)
         self.accept()
@@ -336,6 +445,65 @@ class SettingsDialog(QDialog):
 
     def _open_api_key_help_url(self) -> None:
         QDesktopServices.openUrl(QUrl(_API_KEY_HELP_URL))
+
+    # ── Decision log helpers ───────────────────────────────────────────────
+
+    def _on_browse_csv_path(self) -> None:
+        """Open a Save-As dialog to pick a CSV destination path."""
+        current = self._csv_path_edit.text().strip() or "records/trading_decisions.csv"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "选择 CSV 决策日志路径",
+            current,
+            "CSV 文件 (*.csv);;所有文件 (*.*)",
+        )
+        if path:
+            self._csv_path_edit.setText(path)
+
+    def _on_browse_excel_path(self) -> None:
+        """Open a Save-As dialog to pick an Excel destination path."""
+        current = self._excel_path_edit.text().strip() or "records/trading_decisions.xlsx"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "选择 Excel 决策日志路径",
+            current,
+            "Excel 工作簿 (*.xlsx);;所有文件 (*.*)",
+        )
+        if path:
+            self._excel_path_edit.setText(path)
+
+    def _on_browse_tdx_dir(self) -> None:
+        """Open a directory picker for the TongDaXin install dir."""
+        current = self._tdx_dir_edit.text().strip()
+        if not current:
+            from pa_agent.data.tdx_watchlist import find_tdx_install_dir
+
+            detected = find_tdx_install_dir()
+            current = str(detected) if detected is not None else ""
+        path = QFileDialog.getExistingDirectory(
+            self, "选择通达信安装目录（需含 T0002 子目录）", current
+        )
+        if path:
+            self._tdx_dir_edit.setText(path)
+
+    def _on_open_log_dir(self) -> None:
+        """Reveal the directory of the configured log file in Explorer."""
+        from pathlib import Path
+
+        for raw in (
+            self._csv_path_edit.text().strip(),
+            self._excel_path_edit.text().strip(),
+        ):
+            if not raw:
+                continue
+            folder = Path(raw).expanduser().resolve().parent
+            try:
+                folder.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                continue
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+            return
+        QMessageBox.information(self, "决策日志", "请先填写日志文件路径。")
 
     def _open_agent_tutorial_url(self) -> None:
         QDesktopServices.openUrl(QUrl(_AGENT_TUTORIAL_URL))

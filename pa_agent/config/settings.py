@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 DecisionStance = Literal["conservative", "balanced", "aggressive", "extreme_aggressive"]
-DataSourceKind = Literal["mt5", "tradingview", "akshare"]
+DataSourceKind = Literal["mt5", "tradingview", "akshare", "tdx"]
 NormalizationMode = Literal["strict", "lenient"]
 
 
@@ -20,6 +20,8 @@ class AIProviderSettings(BaseModel):
     thinking: bool = True
     reasoning_effort: Literal["low", "medium", "high", "max"] = "max"
     context_window: int = 2_000_000
+    #: Per-call completion ceiling for the OpenAI-style API. Caps reasoning+content.
+    max_completion_tokens: int = 16384
 
 
 class PromptSettings(BaseModel):
@@ -32,6 +34,10 @@ class PromptSettings(BaseModel):
     experience_max_chars_per_entry: int = Field(default=400, ge=100, le=4000)
     #: Inject pattern判定表 + 速查 brief into Stage 1 user prompt (reduces missed tags).
     stage1_inject_pattern_briefs: bool = True
+    #: Per-file character cap for Stage 2 strategy files. 0 disables the cap.
+    #: Default 4000 keeps the file's "rules" head section (first ~3 KB) and
+    #: trims the verbose examples tail, saving ~30% of Stage 2 prompt size.
+    stage2_strategy_file_max_chars: int = Field(default=4000, ge=0, le=80000)
 
 
 class ValidationSettings(BaseModel):
@@ -55,6 +61,8 @@ class GeneralSettings(BaseModel):
     last_data_source: DataSourceKind = "mt5"
     #: TradingView 交易所；空字符串 =（自动）依次探测预设列表
     last_tradingview_exchange: str = ""
+    #: 通达信安装目录（读取自选股列表用）；空字符串 = 自动探测常见目录
+    tdx_install_dir: str = ""
     last_symbol: str = "XAUUSDm"
     last_timeframe: str = "15m"
     decision_flow_auto_play: bool = True
@@ -72,6 +80,14 @@ class GeneralSettings(BaseModel):
     auto_resume_chart_after_analysis: bool = False
     #: 持续跟踪分析：有新K线收盘时自动触发新一轮分析
     keep_analysis: bool = False
+    #: 是否启用交易决策 CSV 日志记录
+    enable_decision_csv_logging: bool = True
+    #: 交易决策 CSV 文件路径
+    decision_csv_path: str = "records/trading_decisions.csv"
+    #: 是否启用交易决策 Excel (.xlsx) 日志记录
+    enable_decision_excel_logging: bool = True
+    #: 交易决策 Excel 文件路径
+    decision_excel_path: str = "records/trading_decisions.xlsx"
 
     @field_validator("last_data_source", mode="before")
     @classmethod

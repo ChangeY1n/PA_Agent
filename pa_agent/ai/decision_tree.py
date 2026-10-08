@@ -478,17 +478,23 @@ def validate_gate_result_consistency(stage1: dict[str, Any]) -> list[str]:
 
     if gate_result in ("wait", "unknown"):
         last = trace[-1]
-        if isinstance(last, dict) and last.get("answer") not in ("否", "等待"):
-            errors.append(
-                "gate_result wait/unknown should end with answer 否 or 等待 on last gate node"
-            )
+        if isinstance(last, dict):
+            last_nid = str(last.get("node_id", ""))
+            last_ans = last.get("answer")
+            # §1.3 答案"是"表示"极端混乱→等待"，是合法的终止节点；其余 wait/unknown 路径应以"否"或"等待"收尾
+            _YES_WAIT_NODES = frozenset({"1.3"})
+            valid_terminal_answers = ("否", "等待", "是") if last_nid in _YES_WAIT_NODES else ("否", "等待")
+            if last_ans not in valid_terminal_answers:
+                errors.append(
+                    "gate_result wait/unknown should end with answer 否 or 等待 on last gate node"
+                )
 
     # Check node_id ordering: gate_trace must be in ascending chapter-section order.
     # merge_program_nodes now sorts injected nodes, but validate here to catch any
     # future regression or manually constructed traces with wrong ordering.
     #
-    # Exception: when gate_result=wait/unknown, merge_program_nodes_head prepends
-    # program nodes so the AI's terminating node (answer=否/等待) stays at the tail.
+    # Exception: when gate_result=wait/unknown, merge_program_nodes_head keeps the
+    # AI's terminating node at the tail in natural (possibly out-of-order) position.
     # That terminal node is intentionally out of numeric order — skip the ordering
     # check for the last node in wait/unknown traces.
     node_ids = [
@@ -503,8 +509,8 @@ def validate_gate_result_consistency(stage1: dict[str, Any]) -> list[str]:
         curr_key = _gate_trace_sort_key(node_ids[idx])
         if curr_key < prev_key:
             errors.append(
-                f"gate_trace node ordering error: {node_ids[idx - 1]} "
-                f"should come before {node_ids[idx]} "
+                f"gate_trace node ordering error: {node_ids[idx]} "
+                f"should come before {node_ids[idx - 1]} "
                 f"(章节顺序错乱，程序节点注入后未正确排序)"
             )
 

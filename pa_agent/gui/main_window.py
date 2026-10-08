@@ -412,6 +412,16 @@ class MainWindow(QMainWindow):
         self._symbol_combo.setMinimumWidth(110)
         self._apply_data_source_symbol_placeholder()
         ctrl_layout.addWidget(self._symbol_combo)
+
+        # 刷新股票列表（通达信模式：重新读取自选股，运行期间自选变化后点此更新）
+        self._symbol_refresh_btn = QPushButton("↻ 自选")
+        self._symbol_refresh_btn.setToolTip(
+            "重新读取通达信自选股并刷新股票下拉列表\n"
+            "（在通达信客户端中增删自选后点此更新）"
+        )
+        self._symbol_refresh_btn.clicked.connect(self._on_refresh_symbol_list)
+        self._symbol_refresh_btn.hide()
+        ctrl_layout.addWidget(self._symbol_refresh_btn)
         self._populate_symbol_combo_for_source()
 
         self._symbol_alert_label = QLabel("")
@@ -908,6 +918,8 @@ class MainWindow(QMainWindow):
             )
         elif kind == "akshare":
             line.setPlaceholderText("A股 6 位代码，如 600519；指数 000300 或 sh000300")
+        elif kind == "tdx":
+            line.setPlaceholderText("A股 6 位代码，如 600519；下拉列表含通达信自选股")
         else:
             line.setPlaceholderText("输入 MT5 品种名，如 XAUUSDm…")
 
@@ -941,6 +953,31 @@ class MainWindow(QMainWindow):
             self._symbol_combo.setCurrentText(default)
         self._symbol_combo.blockSignals(False)
         self._apply_data_source_symbol_placeholder()
+
+        # 刷新按钮仅在通达信模式下显示（用于重读自选股）
+        refresh_btn = getattr(self, "_symbol_refresh_btn", None)
+        if refresh_btn is not None:
+            refresh_btn.setVisible(kind == "tdx")
+
+    def _on_refresh_symbol_list(self) -> None:
+        """重新读取通达信自选股并刷新股票下拉列表."""
+        data_source = getattr(self._ctx, "data_source", None)
+        watchlist_count: int | None = None
+        try:
+            if data_source is not None:
+                watchlist_count = len(data_source.watchlist_symbols())
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("refresh watchlist_symbols failed: %s", exc)
+        self._populate_symbol_combo_for_source()
+        if watchlist_count is not None:
+            suffix = f"自选股 {watchlist_count} 只" if watchlist_count else "未读取到自选股"
+            self._status_bar.showMessage(
+                f"已刷新股票列表：{self._symbol_combo.count()} 项（{suffix}）"
+            )
+        else:
+            self._status_bar.showMessage(
+                f"已刷新股票列表：{self._symbol_combo.count()} 项"
+            )
 
     def _populate_timeframe_combo_for_source(self) -> None:
         data_source = getattr(self._ctx, "data_source", None)
@@ -1056,6 +1093,16 @@ class MainWindow(QMainWindow):
             timeframe = self._tf_combo.currentText()
 
             new_source = create_data_source(kind)
+            # 通达信：应用设置中的安装目录（股票下拉列表读取自选股用）
+            if kind == "tdx":
+                from pa_agent.data.tdx_source import TDXSource
+
+                if isinstance(new_source, TDXSource):
+                    _settings = getattr(self._ctx, "settings", None)
+                    _tdx_dir = ""
+                    if _settings is not None:
+                        _tdx_dir = getattr(_settings.general, "tdx_install_dir", "") or ""
+                    new_source.set_tdx_dir(_tdx_dir or None)
             # Wire auto-probe status callback for TV
             from pa_agent.data.tradingview import TradingViewSource
             if isinstance(new_source, TradingViewSource):
@@ -3833,6 +3880,8 @@ class MainWindow(QMainWindow):
             pending_writer = getattr(self._ctx, "pending_writer", None)
             exp_reader = getattr(self._ctx, "exp_reader", None)
             settings = getattr(self._ctx, "settings", None)
+            csv_logger = getattr(self._ctx, "csv_logger", None)
+            excel_logger = getattr(self._ctx, "excel_logger", None)
 
             if any(
                 x is None
@@ -3849,6 +3898,8 @@ class MainWindow(QMainWindow):
                 pending_writer=pending_writer,
                 exp_reader=exp_reader,
                 settings=settings,
+                csv_logger=csv_logger,
+                excel_logger=excel_logger,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Could not build orchestrator: %s", exc)
