@@ -272,12 +272,17 @@ class TDXSource(DataSource):
 
         result: list[KlineBar] = []
         is_trading = _is_trading_time()
+        now_ms = int(_cn_now().timestamp() * 1000)
 
         for i, bar in enumerate(bars_desc):
             # 第一根 K 线如果在交易时间内，标记为未完成
             closed = True
-            if i == 0 and is_trading:
-                closed = False
+            if i == 0:
+                # K 线标签时间为周期端点：标签时间在未来 → 周期尚未走完。
+                # 典型场景：盘前 TDX 预创建当日首根 K 线（O=H=L=C=昨收、
+                # 成交量 0 的竞价伪 K 线），不能当作已收盘 K1 参与分析。
+                if is_trading or int(bar["ts_open"]) > now_ms:
+                    closed = False
 
             kbar = KlineBar(
                 seq=i + 1,
