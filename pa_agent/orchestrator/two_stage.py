@@ -345,6 +345,7 @@ class TwoStageOrchestrator:
         on_stage2_files: Callable[[list[str]], None] | None = None,
         previous_record: AnalysisRecord | None = None,
         incremental_new_bar_count: int | None = None,
+        local_gate: Callable[[dict[str, Any]], bool] | None = None,
     ) -> AnalysisRecord:
         """Run the two-stage analysis pipeline and return an AnalysisRecord.
 
@@ -361,6 +362,11 @@ class TwoStageOrchestrator:
             Token checked before each stage and after each API call.
         on_event:
             Callback invoked with OrchestratorEvent values.
+        local_gate:
+            Optional local rule evaluated after Stage 1: returning True
+            forces the gate-wait short-circuit (Stage 2 model call skipped,
+            a synthesized 不下单 decision is saved).  Used by batch
+            screening to cut token cost on textbook no-trade states.
 
         Returns
         -------
@@ -605,15 +611,31 @@ class TwoStageOrchestrator:
             on_stage2_files(list(strategy_files))
 
         gate_result = str(stage1_json.get("gate_result", "proceed")).lower()
+        local_short_circuit = False
+        if gate_result not in ("wait", "unknown") and local_gate is not None:
+            try:
+                local_short_circuit = bool(local_gate(stage1_json))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("local_gate rule failed: %s", exc)
+            if local_short_circuit:
+                gate_result = "wait"
         if gate_result in ("wait", "unknown"):
             from pa_agent.ai.decision_tree import build_stage2_gate_wait_response
 
             if on_stage_prompt is not None:
                 on_stage_prompt("stage2", "", "（阶段一闸门未通过，跳过阶段二模型调用）")
-            short_msg = (
-                f"阶段一 gate_result={gate_result}，程序已短路生成阶段二结果，"
-                "未向模型发起请求。\n"
-            )
+            if local_short_circuit:
+                short_msg = (
+                    "本地规则短路：阶段一诊断命中本地拦截规则"
+                    f"（direction={stage1_json.get('direction')}, "
+                    f"cycle={stage1_json.get('cycle_position')}），"
+                    "跳过阶段二模型调用。\n"
+                )
+            else:
+                short_msg = (
+                    f"阶段一 gate_result={gate_result}，程序已短路生成阶段二结果，"
+                    "未向模型发起请求。\n"
+                )
             _emit_buffered_stream(short_msg, on_stage2_content)
 
             stage2_json = build_stage2_gate_wait_response(stage1_json)

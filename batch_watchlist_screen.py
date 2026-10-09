@@ -37,6 +37,25 @@ _CTX_LOCAL = threading.local()
 
 NO_ORDER = "不下单"
 
+def local_no_trade_gate(stage1_json: dict) -> bool:
+    """阶段一本地短路：True = 跳过阶段二（省 ~60% token）。
+
+    仅当 router 一个策略文件都不会加载时触发（direction=neutral 且
+    cycle_position ∈ {spike, extreme_tr}）：阶段二无任何策略可依，
+    历史记录 9/9 全部判「不下单」，跳过等价于省掉走过场。
+
+    刻意不扩大到 neutral+区间/宽通道：600333（neutral+broad_channel，
+    2026-10-08）检测到 breakout_test 后阶段二给出过限价单，扩大会误杀
+    真实机会；也不看 detected_patterns —— 形态集合在出单/不出单两组
+    几乎相同，无法区分。
+    """
+    from pa_agent.ai.router import route_strategy_files
+
+    try:
+        return not route_strategy_files(stage1_json)
+    except Exception:  # noqa: BLE001
+        return False
+
 
 def thread_ctx():
     """每个工作线程一个独立 AppContext（客户端/编排器不跨线程共享）。"""
@@ -63,7 +82,7 @@ def thread_ctx():
     return ctx
 
 
-def analyze_one(symbol: str, timeframe: str, bar_count: int) -> dict:
+def analyze_one(symbol: str, timeframe: str, bar_count: int, use_local_gate: bool = True) -> dict:
     """分析单只股票：取 K 线 → 建帧 → 两阶段分析 → 分类决策。"""
     from pa_agent.data.factory import create_data_source
     from pa_agent.data.snapshot import (
@@ -114,7 +133,12 @@ def analyze_one(symbol: str, timeframe: str, bar_count: int) -> dict:
             csv_logger=ctx.csv_logger,
             excel_logger=ctx.excel_logger,
         )
-        record = orchestrator.submit(frame, CancelToken(), on_event=lambda evt: None)
+        record = orchestrator.submit(
+            frame,
+            CancelToken(),
+            on_event=lambda evt: None,
+            local_gate=local_no_trade_gate if use_local_gate else None,
+        )
 
         if record.exception is not None:
             exc = record.exception
@@ -157,6 +181,11 @@ def main() -> int:
                         help="分析周期（默认沿用 config/settings.json 的上次周期）")
     parser.add_argument("--workers", type=int, default=5,
                         help="并发线程数（默认 5）")
+    parser.add_argument("--bars", type=int, default=0,
+                        help="K 线根数（默认用设置中的 analysis_bar_count；批量可降到 60 省 token）")
+    parser.add_argument("--no-local-gate", action="store_true",
+                        help="禁用阶段一本地短路（默认开启：阶段一诊断无可用"
+                             "策略文件时直接判观望，跳过阶段二）")
     parser.add_argument("--offset", type=int, default=0,
                         help="跳过自选前 N 只（配合 --limit 分批跑）")
     parser.add_argument("--output", default="batch_analysis_results",
@@ -172,6 +201,8 @@ def main() -> int:
         settings.general, "last_timeframe", "1h"
     ) or "1h"
     bar_count = int(getattr(settings.general, "analysis_bar_count", 100) or 100)
+    if args.bars > 0:
+        bar_count = args.bars
 
     # 读取自选股（与 GUI 同源：设置中的通达信目录 + 自动探测兜底）
     probe = create_data_source("tdx")
@@ -195,15 +226,20 @@ def main() -> int:
         return 1
 
     logger.info(
-        "自选共 %d 只，本次分析 %d 只（offset=%d）· 周期 %s · %d 根K线 · %d 并发",
+        "自选共 %d 只，本次分析 %d 只（offset=%d）· 周期 %s · %d 根K线 · %d 并发 · 本地短路 %s",
         total_watchlist, len(symbols), args.offset, timeframe,
         bar_count, args.workers,
+        "关" if args.no_local_gate else "开",
     )
 
     results: list[dict] = []
     t0 = time.monotonic()
     with ThreadPoolExecutor(max_workers=args.workers, thread_name_prefix="screen") as ex:
-        futures = {ex.submit(analyze_one, s, timeframe, bar_count): s for s in symbols}
+        futures = {
+            ex.submit(analyze_one, s, timeframe, bar_count,
+                      not args.no_local_gate): s
+            for s in symbols
+        }
         for i, fut in enumerate(as_completed(futures), 1):
             sym = futures[fut]
             try:
