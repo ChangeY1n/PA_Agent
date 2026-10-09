@@ -246,6 +246,9 @@ def main() -> int:
                              "策略文件时直接判观望，跳过阶段二）")
     parser.add_argument("--offset", type=int, default=0,
                         help="跳过自选前 N 只（配合 --limit 分批跑）")
+    parser.add_argument("--symbols", default="",
+                        help="只分析指定股票（逗号分隔，如 600048,600196；"
+                             "优先于 --offset/--limit，用于重跑失败股）")
     parser.add_argument("--output", default="batch_analysis_results",
                         help="结果输出目录")
     args = parser.parse_args()
@@ -276,9 +279,21 @@ def main() -> int:
         return 1
 
     total_watchlist = len(symbols)
-    symbols = symbols[args.offset:]
-    if args.limit > 0:
-        symbols = symbols[: args.limit]
+    if args.symbols:
+        # 指定代码模式：优先于 --offset/--limit（用于重跑失败股）
+        wanted = [s.strip() for s in args.symbols.split(",") if s.strip()]
+        known = set(symbols)
+        unknown = [s for s in wanted if s not in known]
+        if unknown:
+            logger.warning("不在自选中的代码已忽略: %s", ",".join(unknown))
+        symbols = [s for s in wanted if s in known]
+        if not symbols:
+            logger.error("--symbols 指定的代码均不在自选中")
+            return 1
+    else:
+        symbols = symbols[args.offset:]
+        if args.limit > 0:
+            symbols = symbols[: args.limit]
     if not symbols:
         logger.error("offset=%d 超出自选总数 %d", args.offset, total_watchlist)
         return 1
