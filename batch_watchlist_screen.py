@@ -1,15 +1,21 @@
 """批量筛选通达信自选股：跑两阶段 AI 分析并列出有交易机会的决策.
 
 用法:
-    python batch_watchlist_screen.py                 # 自选前 10 只试跑
+    python batch_watchlist_screen.py                 # 自选前 10 只试跑（轻量初筛模式）
     python batch_watchlist_screen.py --limit 50      # 跑前 50 只
     python batch_watchlist_screen.py --limit 0       # 全部自选
+    python batch_watchlist_screen.py --mode full     # 跳过初筛，全部走完整两阶段
+    python batch_watchlist_screen.py --light-only    # 只跑初筛不深析（校准/省钱巡视）
     python batch_watchlist_screen.py --timeframe 1d  # 指定周期（默认沿用设置中的上次周期）
 
 说明:
 - 股票列表直接读取通达信自选股（与 GUI 下拉列表同源，含 ↻ 自选 的重读逻辑）。
-- 每只股票走与 GUI 完全相同的分析管线（build_display_frame + TwoStageOrchestrator），
-  记录照常写入 records/pending，之后在 GUI 中切到该股即可增量分析。
+- 默认「轻量初筛」：每只先用一次约 0.8 万 token 的紧凑调用粗筛，通过的才跑
+  完整两阶段（每只约 16 万 token）；初筛方向为空头的直接淘汰（A股无便利做空，
+  历史全部出单均为做多；--allow-short 关闭该过滤）。
+- 每只进入完整分析的股票走与 GUI 完全相同的管线（build_display_frame +
+  TwoStageOrchestrator），记录照常写入 records/pending，之后在 GUI 中切到
+  该股即可增量分析。
 - 「有交易机会」= 阶段二决策 order_type 不是「不下单」。
 """
 from __future__ import annotations
@@ -82,8 +88,19 @@ def thread_ctx():
     return ctx
 
 
-def analyze_one(symbol: str, timeframe: str, bar_count: int, use_local_gate: bool = True) -> dict:
-    """分析单只股票：取 K 线 → 建帧 → 两阶段分析 → 分类决策。"""
+def analyze_one(
+    symbol: str,
+    timeframe: str,
+    bar_count: int,
+    use_local_gate: bool = True,
+    *,
+    mode: str = "light",
+    light_only: bool = False,
+    light_bars: int = 60,
+    long_only: bool = True,
+) -> dict:
+    """分析单只股票：取 K 线 →（可选）轻量初筛 → 两阶段分析 → 分类决策。"""
+    from pa_agent.ai.light_screen import LIGHT_SCREEN_DEFAULT_BARS, run_light_screen
     from pa_agent.data.factory import create_data_source
     from pa_agent.data.snapshot import (
         INDICATOR_WARMUP_BARS,
@@ -95,7 +112,7 @@ def analyze_one(symbol: str, timeframe: str, bar_count: int, use_local_gate: boo
     result = {
         "symbol": symbol,
         "timeframe": timeframe,
-        "status": "failed",  # opportunity | no_order | failed
+        "status": "failed",  # opportunity | no_order | screened_out | light_pass | failed
         "order_type": "",
         "order_direction": "",
         "entry_price": None,
@@ -104,6 +121,9 @@ def analyze_one(symbol: str, timeframe: str, bar_count: int, use_local_gate: boo
         "trade_confidence": None,
         "reasoning": "",
         "error": None,
+        "light": None,  # 初筛判定 {pass, direction, setup, conviction, reason}
+        "tokens_light": 0,
+        "tokens_full": 0,
     }
 
     tdx = None
@@ -117,6 +137,29 @@ def analyze_one(symbol: str, timeframe: str, bar_count: int, use_local_gate: boo
         bars = tdx.latest_snapshot(bar_count + INDICATOR_WARMUP_BARS + 5)
         if not bars:
             raise ValueError("未获取到 K 线数据")
+
+        if mode == "light":
+            n_light = max(20, min(light_bars or LIGHT_SCREEN_DEFAULT_BARS, bar_count))
+            light_frame = build_display_frame(bars, n_light, symbol, timeframe)
+            if light_frame is None:
+                raise ValueError("K 线不足以构建初筛帧")
+            light = run_light_screen(ctx.client, light_frame)
+            result["light"] = {
+                k: light.get(k) for k in ("pass", "direction", "setup", "conviction", "reason")
+            }
+            result["tokens_light"] = (light.get("usage_total") or {}).get("total_tokens") or 0
+            if not light.get("pass"):
+                result["status"] = "screened_out"
+                result["reasoning"] = str(light.get("reason") or "")
+                return _finish(result, t0)
+            if long_only and str(light.get("direction") or "") == "bearish":
+                # A股无便利做空；历史全部出单（6/6）均为做多，空头方向不深析。
+                result["status"] = "screened_out"
+                result["reasoning"] = "（只做多模式：初筛方向为空头）"
+                return _finish(result, t0)
+            if light_only:
+                result["status"] = "light_pass"
+                return _finish(result, t0)
 
         frame = build_display_frame(bars, bar_count, symbol, timeframe)
         if frame is None:
@@ -159,6 +202,7 @@ def analyze_one(symbol: str, timeframe: str, bar_count: int, use_local_gate: boo
         result["trade_confidence"] = inner.get("trade_confidence")
         result["reasoning"] = str(inner.get("reasoning") or "")
         result["status"] = "opportunity" if order and order != NO_ORDER else "no_order"
+        result["tokens_full"] = (record.usage_total or {}).get("total_tokens") or 0
 
     except Exception as exc:  # noqa: BLE001
         result["error"] = str(exc)
@@ -169,12 +213,26 @@ def analyze_one(symbol: str, timeframe: str, bar_count: int, use_local_gate: boo
             except Exception:  # noqa: BLE001
                 pass
 
+    return _finish(result, t0)
+
+
+def _finish(result: dict, t0: float) -> dict:
     result["seconds"] = round(time.monotonic() - t0, 1)
     return result
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="批量筛选通达信自选股（两阶段 AI 分析）")
+    parser.add_argument("--mode", choices=("light", "full"), default="light",
+                        help="light=先轻量初筛再深析（默认，省 60-70%% token）；"
+                             "full=全部直接完整两阶段")
+    parser.add_argument("--light-only", action="store_true",
+                        help="只跑轻量初筛、不跑完整分析（校准/省钱巡视用）")
+    parser.add_argument("--light-bars", type=int, default=0,
+                        help="初筛用 K 线根数（默认 60）")
+    parser.add_argument("--allow-short", action="store_true",
+                        help="初筛为空头方向的也进入深析（默认只做多：A股无便利做空，"
+                             "历史全部出单均为做多）")
     parser.add_argument("--limit", type=int, default=10,
                         help="取自选前 N 只（0 = 全部，默认 10）")
     parser.add_argument("--timeframe", default="",
@@ -226,18 +284,25 @@ def main() -> int:
         return 1
 
     logger.info(
-        "自选共 %d 只，本次分析 %d 只（offset=%d）· 周期 %s · %d 根K线 · %d 并发 · 本地短路 %s",
+        "自选共 %d 只，本次分析 %d 只（offset=%d）· 周期 %s · %d 根K线 · %d 并发 · "
+        "模式 %s · 只做多 %s · 本地短路 %s",
         total_watchlist, len(symbols), args.offset, timeframe,
-        bar_count, args.workers,
+        bar_count, args.workers, args.mode,
+        "关" if args.allow_short else "开",
         "关" if args.no_local_gate else "开",
     )
+
+    light_bars = args.light_bars if args.light_bars > 0 else 60
 
     results: list[dict] = []
     t0 = time.monotonic()
     with ThreadPoolExecutor(max_workers=args.workers, thread_name_prefix="screen") as ex:
         futures = {
             ex.submit(analyze_one, s, timeframe, bar_count,
-                      not args.no_local_gate): s
+                      not args.no_local_gate,
+                      mode=args.mode, light_only=args.light_only,
+                      light_bars=light_bars,
+                      long_only=not args.allow_short): s
             for s in symbols
         }
         for i, fut in enumerate(as_completed(futures), 1):
@@ -246,13 +311,22 @@ def main() -> int:
                 r = fut.result()
             except Exception as exc:  # noqa: BLE001
                 r = {"symbol": sym, "status": "failed", "error": str(exc),
-                     "timeframe": timeframe, "order_type": "", "reasoning": ""}
+                     "timeframe": timeframe, "order_type": "", "reasoning": "",
+                     "light": None, "tokens_light": 0, "tokens_full": 0}
             results.append(r)
             mark = {"opportunity": "★机会", "no_order": "—观望",
+                    "screened_out": "·淘汰", "light_pass": "+入围",
                     "failed": "✗失败"}[r["status"]]
+            light_note = ""
+            if r.get("light") and r.get("tokens_light"):
+                light_note = " [初筛%s %s]" % (
+                    "过" if r["light"].get("pass") else "淘汰",
+                    r["light"].get("direction") or "?",
+                )
             logger.info(
-                "[%d/%d] %s %s %s%s",
+                "[%d/%d] %s %s %s%s%s",
                 i, len(symbols), sym, mark, r.get("order_type") or "",
+                light_note,
                 f" ({r['error'][:80]})" if r["status"] == "failed" else "",
             )
 
@@ -262,7 +336,13 @@ def main() -> int:
         key=lambda r: -(r.get("trade_confidence") or 0),
     )
     no_order = [r for r in results if r["status"] == "no_order"]
+    screened_out = [r for r in results if r["status"] == "screened_out"]
+    light_pass = [r for r in results if r["status"] == "light_pass"]
     failed = [r for r in results if r["status"] == "failed"]
+
+    tokens_light = sum(r.get("tokens_light") or 0 for r in results)
+    tokens_full = sum(r.get("tokens_full") or 0 for r in results)
+    n_full_ran = [r for r in results if (r.get("tokens_full") or 0) > 0]
 
     # ── 保存结果 ────────────────────────────────────────────────────────────
     out_dir = Path(args.output) / datetime.now().strftime("screen_%Y%m%d_%H%M%S")
@@ -273,10 +353,16 @@ def main() -> int:
                 "batch_time": datetime.now().isoformat(),
                 "timeframe": timeframe,
                 "bar_count": bar_count,
+                "mode": args.mode,
+                "light_only": args.light_only,
                 "total": len(results),
                 "opportunities": len(opportunities),
                 "no_order": len(no_order),
+                "screened_out": len(screened_out),
+                "light_pass": len(light_pass),
                 "failed": len(failed),
+                "tokens_light": tokens_light,
+                "tokens_full": tokens_full,
                 "duration_seconds": round(elapsed, 1),
                 "results": results,
             },
@@ -288,8 +374,20 @@ def main() -> int:
     # ── 汇总输出 ────────────────────────────────────────────────────────────
     print()
     print("=" * 78)
-    print(f"批量筛选完成：{len(results)} 只 · 周期 {timeframe} · 耗时 {elapsed/60:.1f} 分钟")
-    print(f"有交易机会 {len(opportunities)} · 观望 {len(no_order)} · 失败 {len(failed)}")
+    print(f"批量筛选完成：{len(results)} 只 · 周期 {timeframe} · 模式 {args.mode}"
+          f" · 耗时 {elapsed/60:.1f} 分钟")
+    line2 = (f"有交易机会 {len(opportunities)} · 观望 {len(no_order)} · 失败 {len(failed)}")
+    if args.mode == "light":
+        line2 += f" · 初筛淘汰 {len(screened_out)}"
+        if args.light_only:
+            line2 += f" · 入围未深析 {len(light_pass)}"
+    print(line2)
+    print(f"token 用量：初筛 {tokens_light:,} + 完整分析 {tokens_full:,}"
+          f" = {tokens_light + tokens_full:,}")
+    if len(n_full_ran) >= 3:
+        baseline = (tokens_full / len(n_full_ran)) * len(results)
+        saved_pct = 100 * (baseline - tokens_light - tokens_full) / baseline
+        print(f"估算节省：{saved_pct:.0f}%（全部直接完整分析约需 {baseline / 10000:.0f} 万 token）")
     print("=" * 78)
 
     if opportunities:
@@ -314,6 +412,12 @@ def main() -> int:
         print("\n失败列表:")
         for r in failed:
             print(f"  {r['symbol']}: {r['error']}")
+
+    if screened_out and args.mode == "light":
+        print("\n初筛淘汰明细:")
+        for r in screened_out:
+            reason = (r.get("reasoning") or "")[:50]
+            print(f"  {r['symbol']}: {reason}")
 
     print(f"\n完整结果: {out_dir / 'summary.json'}")
     print("每只股票的完整分析已存入 records/pending，GUI 切到该股可查看/增量分析")
