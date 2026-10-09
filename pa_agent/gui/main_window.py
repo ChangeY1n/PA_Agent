@@ -34,6 +34,11 @@ logger = logging.getLogger(__name__)
 # Zombie timeout in milliseconds (5 seconds)
 _WORKER_JOIN_TIMEOUT_MS = 5000
 
+# GUI 线程上后台数据线程（RefreshLoop / SnapshotFetchWorker）的最长 join 等待；
+# 超时按僵尸处理、稍后回收。只用于限定 UI 冻结上界——AI worker 取消仍用
+# 5000ms 完整超时（取消正确性敏感）。
+_DATA_THREAD_JOIN_TIMEOUT_MS = 300
+
 
 def _parse_sr_price(raw: object) -> float | None:
     """Parse a support/resistance price string from the AI output.
@@ -224,6 +229,8 @@ class MainWindow(QMainWindow):
         self._connect_event_bus()
         self._update_ai_mode_label()
         self._sync_submit_button_state()
+        # R2: 启动时自动展示上次品种/周期的历史分析（延迟到事件循环，窗口先显示）
+        QTimer.singleShot(0, self._startup_show_saved_analysis)
 
     # ── UI construction ───────────────────────────────────────────────────────
 
@@ -705,14 +712,14 @@ class MainWindow(QMainWindow):
                 except Exception:  # noqa: BLE001
                     pass
         if loop.isRunning():
-            loop.wait(_WORKER_JOIN_TIMEOUT_MS)
+            loop.wait(_DATA_THREAD_JOIN_TIMEOUT_MS)
             if loop.isRunning():
-                # RefreshLoop is stuck in a blocking WebSocket call — it will
+                # RefreshLoop is stuck in a blocking socket/HTTP call — it will
                 # eventually time out and check the cancel token, but until
                 # then we track it as a zombie so it can be reaped later.
                 logger.warning(
                     "RefreshLoop did not finish within %d ms; tracking as zombie",
-                    _WORKER_JOIN_TIMEOUT_MS,
+                    _DATA_THREAD_JOIN_TIMEOUT_MS,
                 )
                 zombies = getattr(self, "_zombie_loops", None)
                 if zombies is None:
@@ -739,12 +746,12 @@ class MainWindow(QMainWindow):
             self._snapshot_fetch_id = None
             self._snapshot_fetch_worker = None
             if sfw.isRunning():
-                sfw.wait(_WORKER_JOIN_TIMEOUT_MS)
+                sfw.wait(_DATA_THREAD_JOIN_TIMEOUT_MS)
                 if sfw.isRunning():
                     logger.warning(
                         "SnapshotFetchWorker did not finish within %d ms; "
                         "it will eventually finish but results will be ignored",
-                        _WORKER_JOIN_TIMEOUT_MS,
+                        _DATA_THREAD_JOIN_TIMEOUT_MS,
                     )
 
     def _reap_zombie_loops(self) -> None:
@@ -1159,13 +1166,28 @@ class MainWindow(QMainWindow):
         finally:
             self._switching = False
 
+        # R2: 数据源切换同样涉及品种上下文变化，自动展示当前品种的历史分析
+        self._maybe_show_saved_analysis(
+            self._symbol_combo.currentText().strip(), self._tf_combo.currentText()
+        )
+
     # ── Slots ─────────────────────────────────────────────────────────────────
 
     def _on_symbol_combo_text_changed(self, _text: str = "") -> None:
         """Debounce symbol edits so partial codes (00→600519) do not spam subscribe."""
-        self._update_symbol_data_alert()
         sym = self._symbol_combo.currentText()
         tf = self._tf_combo.currentText()
+        # A 股源（tdx/akshare）：代码未输完整时不排队切换，避免每次击键
+        # 停顿 500ms 后触发完整切换周期（GUI 冻结根因）。
+        if self._current_data_source_kind() in ("tdx", "akshare"):
+            from pa_agent.data.market_defaults import is_partial_ashare_symbol_input
+
+            if is_partial_ashare_symbol_input(sym.strip()):
+                if self._symbol_switch_timer is not None:
+                    self._symbol_switch_timer.stop()
+                self._pending_symbol_switch = None
+                return
+        self._update_symbol_data_alert()
         self._pending_symbol_switch = (sym, tf)
         if self._symbol_switch_timer is not None:
             self._symbol_switch_timer.start()
@@ -1543,6 +1565,8 @@ class MainWindow(QMainWindow):
         Builds a KlineFrame from bars delivered by RefreshLoop (background fetch).
         Chart updates on the UI thread only render; network I/O stays on RefreshLoop.
         """
+        # 每个数据 tick 顺带回收僵尸刷新线程（不依赖跑过分析才会清理）
+        self._reap_zombie_loops()
         if bars:
             self._last_frame_ready_bars = list(bars)
             from pa_agent.data.bar_close_wait import current_forming_ts
@@ -1641,21 +1665,25 @@ class MainWindow(QMainWindow):
         if getattr(self, "_demo_mode", False):
             return
 
-        self._clear_pending_bar_close_wait()
+        # ── 残缺输入守卫：必须在停线程/取消订阅之前，被拒绝的输入应保持
+        #    当前订阅与刷新循环原样运行 ─────────────────────────────────────
+        from pa_agent.data.market_defaults import (
+            is_partial_ashare_symbol_input,
+            is_partial_tv_symbol_input,
+        )
 
-        # Cancel any running SnapshotFetchWorker so its stale callbacks don't
-        # fire after we've already changed symbol/tf (would corrupt state).
-        self._cancel_snapshot_fetch_worker()
-
-        # Stop any running refresh — user must click "获取数据" to re-fetch
-        self._stop_refresh_loop()
-
-        from pa_agent.data.market_defaults import is_partial_tv_symbol_input
-
-        if (
-            self._current_data_source_kind() == "tradingview"
-            and is_partial_tv_symbol_input(new_symbol.strip())
+        kind = self._current_data_source_kind()
+        if kind in ("tdx", "akshare") and is_partial_ashare_symbol_input(
+            new_symbol.strip()
         ):
+            self._status_bar.showMessage(
+                "请输入完整 6 位 A 股代码（如 600519，指数可 sh000300）"
+                f" — 当前：{new_symbol.strip()}"
+            )
+            self._update_symbol_data_alert()
+            return
+
+        if kind == "tradingview" and is_partial_tv_symbol_input(new_symbol.strip()):
             from pa_agent.data.tv_symbol_lookup import is_tv_name_input
 
             hint = (
@@ -1666,6 +1694,24 @@ class MainWindow(QMainWindow):
             self._status_bar.showMessage(f"{hint} — 当前：{new_symbol.strip()}")
             self._update_symbol_data_alert()
             return
+
+        # ── 与当前订阅完全一致时不做任何切换（重复选择/输入完成但未修改）──
+        data_source = getattr(self._ctx, "data_source", None)
+        if (
+            data_source is not None
+            and str(getattr(data_source, "_symbol", "")) == new_symbol
+            and str(getattr(data_source, "_timeframe", "")) == new_tf
+        ):
+            return
+
+        self._clear_pending_bar_close_wait()
+
+        # Cancel any running SnapshotFetchWorker so its stale callbacks don't
+        # fire after we've already changed symbol/tf (would corrupt state).
+        self._cancel_snapshot_fetch_worker()
+
+        # Stop any running refresh — user must click "获取数据" to re-fetch
+        self._stop_refresh_loop()
 
         self._switching = True
         # Reset the auto-incremental flag immediately — a manual symbol/tf
@@ -1736,6 +1782,17 @@ class MainWindow(QMainWindow):
             self._free_chat_session = None
             self._disable_chat_input()
 
+            # ── Step 5b: 清空上一只股票的分析面板（避免残留误导） ────────────
+            self._clear_analysis_panels()
+            self._decision_badge.setText("")
+            self._last_stage1_diagnosis = None
+            flow = getattr(self, "_flow_bar", None)
+            if flow is not None and hasattr(flow, "reset_all"):
+                flow.reset_all()
+            strip = getattr(self, "_summary_strip", None)
+            if strip is not None:
+                strip.reset()
+
             # ── Step 6: Reset ledger (always reset on symbol/tf switch) ───────
             ledger = getattr(self._ctx, "ledger", None)
             if ledger is not None:
@@ -1785,6 +1842,10 @@ class MainWindow(QMainWindow):
             # frame_ready signal does not unexpectedly fire analysis.
             self._auto_incremental_pending = False
 
+            # R2: 有历史记录则自动展示到界面（并跳转「实时」页）；
+            # 无记录则保持上方 Step 5b 已清空的面板。
+            self._maybe_show_saved_analysis(new_symbol, new_tf)
+
     def _check_auto_incremental(self, symbol: str, timeframe: str) -> None:
         """After a symbol/tf switch, look for a prior record and set the
         auto-incremental flag so analysis triggers once bars are available."""
@@ -1826,6 +1887,89 @@ class MainWindow(QMainWindow):
                 )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Auto-incremental check failed: %s", exc)
+
+    def _maybe_show_saved_analysis(self, symbol: str, timeframe: str) -> None:
+        """品种/周期切换（或启动）后，自动展示最近一次成功分析记录（R2）。
+
+        无记录时不做事——切换路径 Step 5b 已把面板清空，避免上一只
+        股票的内容残留。
+        """
+        if getattr(self, "_demo_mode", False):
+            return
+        if not symbol or not timeframe:
+            return
+        if self._analysis_in_progress or self._pending_submit_after_close:
+            return  # 正在分析 / 等收盘提交：不要覆盖实时流程
+        if getattr(self, "_switching", False):
+            return
+        try:
+            from pa_agent.records.analysis_history import (
+                find_latest_successful_record_and_path,
+            )
+
+            hit = find_latest_successful_record_and_path(
+                symbol=symbol, timeframe=timeframe
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Saved-analysis lookup failed: %s", exc)
+            return
+        if hit is None:
+            return
+        path, record = hit
+        self._show_saved_analysis(path, record)
+
+    def _show_saved_analysis(self, path: Any, record: Any) -> None:
+        """把已保存的分析记录渲染进界面（不跑 AI、不流式回放）。"""
+        from pathlib import Path
+
+        from pa_agent.demo.record_loader import frame_from_record_klines
+
+        meta = record.meta
+        # 1) 图表：先展示记录当时的 K 线（下一次 frame_ready 会被实时帧
+        #    替换；决策 overlay 与支撑/阻力线在 set_frame 后仍然保留）。
+        try:
+            frame = frame_from_record_klines(
+                record.kline_data,
+                symbol=meta.symbol,
+                timeframe=meta.timeframe,
+                snapshot_ts_local_ms=meta.timestamp_local_ms,
+            )
+            self._chart_widget.set_frame_now(frame, fit_view=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Saved-analysis chart rebuild failed: %s", exc)
+
+        # 2) 面板：复用实时分析完成的同一条渲染路径（顺序与真实 worker
+        #    一致：record_ready 先于 finished，_last_stage1_diagnosis 依赖
+        #    该顺序）。
+        self._on_record_ready(record)
+        decision = record.stage2_decision
+        self._on_analysis_finished(decision if isinstance(decision, dict) else {})
+
+        # 3) 历史标记 + 跳转「实时」页（focus_stream 放最后，避免决策树
+        #    可视化自动播放把标签页抢走）。
+        ts_label = getattr(meta, "timestamp_local_iso", "") or Path(path).stem
+        self._status_bar.showMessage(
+            f"已加载历史分析（{ts_label}）· {meta.symbol} {meta.timeframe}"
+            " · 非本次实时分析，可点「增量分析」复核"
+        )
+        inner = decision.get("decision", decision) if isinstance(decision, dict) else {}
+        order = str(inner.get("order_type", "") or "") if isinstance(inner, dict) else ""
+        self._decision_badge.setText(f"历史决策: {order}" if order else "历史分析")
+        self._ai_sidebar.focus_stream()
+        logger.info(
+            "Auto-showed saved analysis %s for %s %s",
+            Path(path).name,
+            meta.symbol,
+            meta.timeframe,
+        )
+
+    def _startup_show_saved_analysis(self) -> None:
+        """启动完成后自动展示当前品种/周期的历史分析（若有）。"""
+        if getattr(self, "_demo_mode", False):
+            return
+        symbol = self._symbol_combo.currentText().strip()
+        timeframe = self._tf_combo.currentText()
+        self._maybe_show_saved_analysis(symbol, timeframe)
 
     def _disable_chat_input(self) -> None:
         """Disable free-chat input in the AI stream window."""
@@ -2352,6 +2496,36 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(max(60, int(delay_ms)), _go)
 
+    def _clear_analysis_panels(self) -> None:
+        """清空全部分析输出面板（品种切换 / 演示回放前调用）。
+
+        注意：图表 ``reset()`` 不会移除支撑/阻力线，需单独清除，
+        否则上一只股票的价位线会残留到下一只股票上。
+        """
+        panel = getattr(self, "_stream_panel", None)
+        if panel is not None:
+            panel.clear()
+        for name in (
+            "_debug_widget",
+            "_decision_tree_panel",
+            "_decision_flow_viz_panel",
+            "_decision_panel",
+            "_future_trend_panel",
+        ):
+            w = getattr(self, name, None)
+            if w is not None:
+                w.clear()
+        pf = getattr(self, "_prompt_files_panel", None)
+        if pf is not None:
+            from pa_agent.ai.prompt_assembler import stage1_prompt_txt_files
+
+            pf.clear()
+            pf.set_stage1_files(stage1_prompt_txt_files())
+            pf.set_extras(stage1_builtin=True)
+        chart = getattr(self, "_chart_widget", None)
+        if chart is not None:
+            chart.clear_support_resistance()
+
     def _enter_demo_mode(
         self,
         path: Any,
@@ -2437,21 +2611,10 @@ class MainWindow(QMainWindow):
         self._decision_badge.setText("演示中…")
 
         self._ai_sidebar.focus_stream()
+        self._clear_analysis_panels()
         panel = self._stream_panel
-        panel.clear()
         panel.on_analysis_started()
         panel.set_input_enabled(False)
-        self._debug_widget.clear()
-        self._decision_tree_panel.clear()
-        self._decision_flow_viz_panel.clear()
-        self._decision_panel.clear()
-        self._future_trend_panel.clear()
-
-        from pa_agent.ai.prompt_assembler import stage1_prompt_txt_files
-
-        self._prompt_files_panel.clear()
-        self._prompt_files_panel.set_stage1_files(stage1_prompt_txt_files())
-        self._prompt_files_panel.set_extras(stage1_builtin=True)
 
         self._demo_replayer = DemoReplayer(record, parent=self)
         self._demo_replayer.status_update.connect(self._on_status_update)
@@ -2550,6 +2713,11 @@ class MainWindow(QMainWindow):
                 self._chart_widget.request_fit_on_next_render()
             self._status_bar.showMessage("已退出演示模式")
             self._refresh_chart_once()
+            # 退出演示后按当前品种恢复历史分析展示（演示面板同样有过期内容问题）
+            self._maybe_show_saved_analysis(
+                self._symbol_combo.currentText().strip(),
+                self._tf_combo.currentText(),
+            )
 
     def _on_submit_analysis(self) -> None:
         """Handle the '提交分析' / '增量分析' button click.

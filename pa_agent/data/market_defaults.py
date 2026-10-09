@@ -176,6 +176,24 @@ def is_partial_tv_symbol_input(symbol: str) -> bool:
     return False
 
 
+def is_partial_ashare_symbol_input(symbol: str) -> bool:
+    """判断 tdx/akshare 源的 A 股代码是否仍在输入中（未输完整）。
+
+    完整输入：6 位数字代码（600519）或 sh/sz + 6 位（sh000300）。
+    未完整：空串、不足 6 位数字、sh/sz 前缀但数字不足 6 位。
+    其它（字母名称、带 .SH 后缀等）视为完整，交由订阅失败路径兜底。
+    """
+    s = (symbol or "").strip()
+    if not s:
+        return True
+    m = re.match(r"^(?:sh|sz)(\d*)$", s, re.IGNORECASE)
+    if m:
+        return len(m.group(1)) < 6
+    if s.isdigit():
+        return len(s) < 6
+    return False
+
+
 def is_numeric_tv_equity_symbol(symbol: str) -> bool:
     """Digit-only symbols are stocks/indices, not spot gold."""
     s = (symbol or "").strip()

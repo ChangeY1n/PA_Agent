@@ -46,6 +46,55 @@ def load_record(path: Path) -> AnalysisRecord | None:
         return None
 
 
+def _successful_record_or_none(
+    path: Path, symbol: str, timeframe: str
+) -> AnalysisRecord | None:
+    """Load *path* and return it only if it is a full successful match."""
+    record = load_record(path)
+    if record is None:
+        return None
+    if record.meta.symbol != symbol or record.meta.timeframe != timeframe:
+        return None
+    if record.exception is not None:
+        return None
+    if not record.stage1_diagnosis or not record.stage2_decision:
+        return None
+    if not record.kline_data:
+        return None
+    return record
+
+
+def find_latest_successful_record_and_path(
+    *,
+    symbol: str,
+    timeframe: str,
+    directory: Path | None = None,
+) -> tuple[Path, AnalysisRecord] | None:
+    """Return (path, record) of the newest full successful record.
+
+    快路径：记录文件名内嵌 ``_{symbol}_{timeframe}.json`` 后缀（见
+    PendingWriter 的命名），先用后缀过滤、只解析少量候选；无命中再回退
+    全量扫描以兼容手工改名/遗留文件名。短代码后缀可能误报（如 "001"
+    vs "6001"），但 meta 校验保证正确性——后缀只是性能提示。
+    """
+    paths = list_record_paths(directory)
+    suffix = f"_{symbol}_{timeframe}.json"
+    for path in paths:
+        if not path.name.endswith(suffix):
+            continue
+        record = _successful_record_or_none(path, symbol, timeframe)
+        if record is not None:
+            return path, record
+    # 回退：解析所有不带该后缀的文件（遗留文件名）
+    for path in paths:
+        if path.name.endswith(suffix):
+            continue
+        record = _successful_record_or_none(path, symbol, timeframe)
+        if record is not None:
+            return path, record
+    return None
+
+
 def find_latest_successful_record(
     *,
     symbol: str,
@@ -53,20 +102,10 @@ def find_latest_successful_record(
     directory: Path | None = None,
 ) -> AnalysisRecord | None:
     """Find the newest full successful record for a symbol/timeframe."""
-    for path in list_record_paths(directory):
-        record = load_record(path)
-        if record is None:
-            continue
-        if record.meta.symbol != symbol or record.meta.timeframe != timeframe:
-            continue
-        if record.exception is not None:
-            continue
-        if not record.stage1_diagnosis or not record.stage2_decision:
-            continue
-        if not record.kline_data:
-            continue
-        return record
-    return None
+    hit = find_latest_successful_record_and_path(
+        symbol=symbol, timeframe=timeframe, directory=directory
+    )
+    return hit[1] if hit is not None else None
 
 
 def compute_incremental_bar_delta(

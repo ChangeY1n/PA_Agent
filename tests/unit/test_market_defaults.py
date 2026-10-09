@@ -7,6 +7,7 @@ from pa_agent.data.market_defaults import (
     GOLD_TV_SYMBOL,
     ashare_tv_probe_order,
     infer_ashare_tv_exchange,
+    is_partial_ashare_symbol_input,
     is_partial_tv_symbol_input,
     is_tv_exchange_auto,
     migrate_general_gold_defaults,
@@ -18,6 +19,26 @@ from pa_agent.data.market_defaults import (
     tv_forex_auto_probe_plan,
 )
 from pa_agent.data.tradingview import TV_EXCHANGE_PRESETS
+
+
+def test_partial_ashare_symbol_input():
+    """tdx/akshare 源的 6 位代码残缺输入判定。"""
+    # 未输完整
+    assert is_partial_ashare_symbol_input("") is True
+    assert is_partial_ashare_symbol_input("   ") is True
+    assert is_partial_ashare_symbol_input("6") is True
+    assert is_partial_ashare_symbol_input("60") is True
+    assert is_partial_ashare_symbol_input("60051") is True
+    assert is_partial_ashare_symbol_input("sh0003") is True
+    assert is_partial_ashare_symbol_input("SZ6005") is True
+    # 完整
+    assert is_partial_ashare_symbol_input("600519") is False
+    assert is_partial_ashare_symbol_input("000300") is False
+    assert is_partial_ashare_symbol_input("sh000300") is False
+    assert is_partial_ashare_symbol_input("SH600519") is False
+    # 非纯数字输入不拦截（交给订阅失败路径兜底）
+    assert is_partial_ashare_symbol_input("XAUUSDm") is False
+    assert is_partial_ashare_symbol_input("600519.SS") is False
 
 
 def test_crypto_symbol_migrates_to_gold():

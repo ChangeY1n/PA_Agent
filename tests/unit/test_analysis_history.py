@@ -110,3 +110,70 @@ def test_compute_incremental_delta_two_new_bars():
     assert delta is not None
     assert delta.new_count == 2
     assert delta.new_bar_ts_opens == (3000.0, 2000.0)
+
+
+# ── find_latest_successful_record_and_path: 文件名预过滤 ──────────────────────
+
+def _save_record_json(directory, name: str, record: AnalysisRecord) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / name).write_text(record.model_dump_json(), encoding="utf-8")
+
+
+def _record_for(symbol: str, timeframe: str, *, failed: bool = False) -> AnalysisRecord:
+    base = _record_with_latest(1000.0)
+    return base.model_copy(
+        update={
+            "meta": base.meta.model_copy(
+                update={"symbol": symbol, "timeframe": timeframe}
+            ),
+            "exception": {"type": "validation", "message": "x"} if failed else None,
+        }
+    )
+
+
+def test_find_latest_prefers_newest_matching_suffix(tmp_path):
+    from pa_agent.records.analysis_history import (
+        find_latest_successful_record_and_path,
+    )
+
+    _save_record_json(tmp_path, "2026-01-01_10-00-00_600519_1d.json", _record_for("600519", "1d"))
+    _save_record_json(tmp_path, "2026-01-02_10-00-00_600519_1d.json", _record_for("600519", "1d"))
+    _save_record_json(tmp_path, "2026-01-03_10-00-00_000001_1d.json", _record_for("000001", "1d"))
+
+    hit = find_latest_successful_record_and_path(
+        symbol="600519", timeframe="1d", directory=tmp_path
+    )
+    assert hit is not None
+    path, record = hit
+    assert path.name.startswith("2026-01-02")
+    assert record.meta.symbol == "600519"
+
+
+def test_find_latest_skips_failed_and_falls_back_to_legacy_names(tmp_path):
+    from pa_agent.records.analysis_history import (
+        find_latest_successful_record_and_path,
+    )
+
+    # 同后缀最新一条是失败记录 → 跳过；无后缀匹配的遗留文件名 → 回退全扫命中
+    _save_record_json(tmp_path, "2026-01-02_10-00-00_600519_1d.json", _record_for("600519", "1d", failed=True))
+    _save_record_json(tmp_path, "legacy_export.json", _record_for("600519", "1d"))
+
+    hit = find_latest_successful_record_and_path(
+        symbol="600519", timeframe="1d", directory=tmp_path
+    )
+    assert hit is not None
+    assert hit[0].name == "legacy_export.json"
+
+
+def test_find_latest_suffix_false_positive_is_rejected_by_meta(tmp_path):
+    """短代码后缀误报（"001" vs "…_6001_1d.json"）必须被 meta 校验拒绝。"""
+    from pa_agent.records.analysis_history import (
+        find_latest_successful_record_and_path,
+    )
+
+    _save_record_json(tmp_path, "2026-01-01_10-00-00_6001_1d.json", _record_for("6001", "1d"))
+
+    hit = find_latest_successful_record_and_path(
+        symbol="001", timeframe="1d", directory=tmp_path
+    )
+    assert hit is None
