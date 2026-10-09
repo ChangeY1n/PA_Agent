@@ -237,8 +237,8 @@ def main() -> int:
                         help="取自选前 N 只（0 = 全部，默认 10）")
     parser.add_argument("--timeframe", default="",
                         help="分析周期（默认沿用 config/settings.json 的上次周期）")
-    parser.add_argument("--workers", type=int, default=5,
-                        help="并发线程数（默认 5）")
+    parser.add_argument("--workers", type=int, default=10,
+                        help="并发线程数（默认 10；网关限流出现失败时调低）")
     parser.add_argument("--bars", type=int, default=0,
                         help="K 线根数（默认用设置中的 analysis_bar_count；批量可降到 60 省 token）")
     parser.add_argument("--no-local-gate", action="store_true",
