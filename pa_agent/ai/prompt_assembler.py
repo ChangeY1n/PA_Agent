@@ -191,6 +191,7 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
 
 **逐K摘要硬规则：**
 - 必须输出 `bar_by_bar_summary`，**至少 8 条**（分析窗口≥8根时），覆盖最近 **K8–K1** 每一根已收盘 K 线各 1 条（可简写 reason，但**不可只写 K5–K1 共 5 条**）；最多 12 条。数据不足 8 根则覆盖全部。
+- **P1-1: 必须按时间正序排列（从老到新）**：数组第一项是最早的K线（如K8），最后一项是K1（最新）。这与K线数据表的正序呈现保持一致，避免时间理解混乱。
 - 每条只写该 K 线对当前结构的增量作用，不写下单价格、不写止损止盈。
 - `role` 只能使用示例中的 8 个英文枚举；延续/跟随棒统一写 `confirmation`，不要写 `continuation`。
 - K线序号方向：K1 是最新已收盘，K2 是它前一根；判断 K2 的后续跟随时看 K1，判断 K3 的后续跟随时看 K2/K1；K1 的跟随通常为 pending。
@@ -515,11 +516,11 @@ def _stage1_output_reminder_for_mode(analysis_mode: str = "original") -> str:
 # txt files merged into each stage prompt (order preserved)
 COMMON_SYSTEM_STAGE1_TXT_FILES: tuple[str, ...] = (
     "提示词大纲_人设与思维方式.txt",
-    "二元决策.txt",           # unified with Stage 2 for prefix caching; §0–§2 gate subset is included
+    "二元决策_闸门部分.txt",  # Stage 1 only needs §0–§2 (gate logic), ~8k tokens vs 40k for full tree
 )
 COMMON_SYSTEM_STAGE2_TXT_FILES: tuple[str, ...] = (
     "提示词大纲_人设与思维方式.txt",
-    "二元决策.txt",
+    "二元决策.txt",           # Stage 2 needs full decision tree §0–§15
 )
 # Back-compat alias for UI helpers that list “common” files (Stage 2 full tree).
 COMMON_SYSTEM_PROMPT_TXT_FILES: tuple[str, ...] = COMMON_SYSTEM_STAGE2_TXT_FILES
@@ -744,9 +745,56 @@ class PromptAssembler:
     # ── K-line table rendering ────────────────────────────────────────────────
 
     @staticmethod
-    def _render_kline_table(frame: KlineFrame, limit: int | None = None) -> str:
-        """Render the K-line data as a compact text table (newest bar first).
+    def _extract_swing_extremes(bars: list, atr: float, min_gap: int = 5) -> str:
+        """Extract swing highs/lows from K41-K100 for htf_context.
 
+        Only includes extremes that:
+        - Are at least min_gap bars apart from neighbors
+        - Differ by at least 0.5×ATR from the previous extreme of same type
+        """
+        if not bars or math.isnan(atr) or atr <= 0:
+            return ""
+
+        highs, lows = [], []
+        n = len(bars)
+
+        for i in range(n):
+            if i < min_gap or i >= n - min_gap:
+                continue
+
+            # Check if local high
+            is_high = all(
+                bars[i].high >= bars[j].high
+                for j in range(max(0, i - min_gap), min(n, i + min_gap + 1))
+                if j != i
+            )
+            if is_high:
+                if not highs or abs(bars[i].high - highs[-1][1]) >= 0.5 * atr:
+                    highs.append((bars[i].seq, bars[i].high))
+
+            # Check if local low
+            is_low = all(
+                bars[i].low <= bars[j].low
+                for j in range(max(0, i - min_gap), min(n, i + min_gap + 1))
+                if j != i
+            )
+            if is_low:
+                if not lows or abs(bars[i].low - lows[-1][1]) >= 0.5 * atr:
+                    lows.append((bars[i].seq, bars[i].low))
+
+        parts = []
+        if highs:
+            parts.append("、".join([f"K{seq}高点{_fmt_price(h)}" for seq, h in highs]))
+        if lows:
+            parts.append("、".join([f"K{seq}低点{_fmt_price(lo)}" for seq, lo in lows]))
+
+        return "；".join(parts) if parts else "无明显波段极值"
+
+    @staticmethod
+    def _render_kline_table(frame: KlineFrame, limit: int | None = None) -> str:
+        """Render the K-line data as a compact text table (REVERSED: oldest first, newest last).
+
+        P1-1: 表格改为正序（从老到新），符合人类时间流向阅读习惯，避免AI混淆K线时间先后关系。
         紧凑编码：列间单空格分隔、不做对齐填充、价格/指标剥尾零——此表
         每股独有（缓存未命中全价计费），填充空格与冗余小数是纯 token 浪费。
         """
@@ -754,9 +802,20 @@ class PromptAssembler:
             "序号 | 时间 | 开盘价 | 最高价 | 最低价 | 收盘价 | 阳阴 | 成交量 | EMA20 | ATR14",
         ]
         bars = frame.bars[:limit] if limit is not None else frame.bars
-        for i, bar in enumerate(bars):
-            ema = frame.indicators.ema20[i]
-            atr = frame.indicators.atr14[i]
+        indicators_slice = (
+            (frame.indicators.ema20[:limit], frame.indicators.atr14[:limit])
+            if limit is not None
+            else (frame.indicators.ema20, frame.indicators.atr14)
+        )
+
+        # P1-1: Reverse both bars and indicators so oldest appears first
+        bars_reversed = list(reversed(bars))
+        ema20_reversed = list(reversed(indicators_slice[0]))
+        atr14_reversed = list(reversed(indicators_slice[1]))
+
+        for i, bar in enumerate(bars_reversed):
+            ema = ema20_reversed[i]
+            atr = atr14_reversed[i]
             ema_str = _fmt_price(ema) if not math.isnan(ema) else "N/A"
             atr_str = _fmt_price(atr) if not math.isnan(atr) else "N/A"
             yang_yin = bar_candle_direction_label(bar)
@@ -767,17 +826,24 @@ class PromptAssembler:
                 f"{ema_str} | {atr_str}"
             )
         lines.append(_KLINE_INDICATOR_NOTE)
+        lines.append("⚠️ 表格按时间正序排列：第一行最早（K序号最大），最后一行K1最新。时间流向从上往下。")
         return "\n".join(lines)
 
     @staticmethod
     def _render_kline_feature_table(frame: KlineFrame, limit: int | None = None) -> str:
-        """Render方案 A single-bar geometry features for prompt grounding."""
+        """Render single-bar geometry features for prompt grounding (REVERSED: oldest first).
+
+        P1-1: 特征表也改为正序，与K线数据表保持一致。
+        """
         shown = limit if limit is not None else len(frame.bars)
         lines = [
             f"（几何特征：最近 {shown} 根已收盘 K 线；多棒形态已用完整窗口计算）",
             "序号 | 类型 | 实体比 | 上影比 | 下影比 | 收盘位置 | Range/ATR | EMA关系 | 与前棒重叠 | ii/iii | ioi | 微双 | 缺口 | EMA缺口数 | 近5突破 | 后续",
         ]
-        for feat in compute_kline_geometry_features(frame, limit=limit):
+        features = list(compute_kline_geometry_features(frame, limit=limit))
+        # P1-1: Reverse so oldest feature appears first
+        features_reversed = list(reversed(features))
+        for feat in features_reversed:
             lines.append(
                 f"{feat.seq} | {feat.bar_type} | "
                 f"{_fmt_feature(feat.body_ratio)} | "
@@ -796,6 +862,7 @@ class PromptAssembler:
                 f"{feat.follow_through_1_2}"
             )
         lines.append(_KLINE_INDICATOR_NOTE)
+        lines.append("⚠️ 特征表按时间正序排列：第一行最早，最后一行K1最新。")
         return "\n".join(lines)
 
     # ── Stage 1 ───────────────────────────────────────────────────────────────
@@ -967,9 +1034,20 @@ class PromptAssembler:
             _stage1_output_reminder_for_mode(analysis_mode),
         ]
         stage1_context = "\n\n---\n\n".join(p for p in stage1_parts if p)
-        kline_table = self._render_kline_table(frame)
-        feature_table = self._render_kline_feature_table(frame)
+
+        # P0-2: Only show K1-K40 in table; extract K41-K100 swing extremes for htf_context
         n_bars = len(frame.bars)
+        detail_limit = min(40, n_bars)  # Show at most 40 bars in detail
+        kline_table = self._render_kline_table(frame, limit=detail_limit)
+        feature_table = self._render_kline_feature_table(frame, limit=detail_limit)
+
+        # Extract swing extremes from K41-K100 if available
+        htf_swing_text = ""
+        if n_bars > 40:
+            older_bars = frame.bars[40:]  # K41 onwards (newest-first indexing)
+            atr = frame.indicators.atr14[0] if frame.indicators.atr14 else math.nan
+            htf_swing_text = self._extract_swing_extremes(older_bars, atr)
+
         return (
             "## 阶段一任务\n\n"
             "你现在只执行阶段一：市场诊断与闸门判断。不要评估具体下单、止损、止盈或仓位。\n\n"
@@ -980,24 +1058,23 @@ class PromptAssembler:
             f"（K线序号：1=最新已收盘，最大 K{n_bars}；"
             f"每个决策节点的 bar_range 由你自行选择子区间，勿超出 K{n_bars}-K1）\n\n"
             f"## ⚠️ 分析窗口分层规则（强制，必须遵守）\n\n"
-            f"你收到全部 {n_bars} 根 K 线数据，但分析深度必须严格分层：\n\n"
-            f"**详细分析区 K1–K40（最近约 10 小时）：**\n"
-            f"- bar_by_bar_summary 覆盖此区间\n"
+            f"你收到最近 {detail_limit} 根 K 线的详细数据（下方表格），分析深度必须严格分层：\n\n"
+            f"**详细分析区 K1–K{detail_limit}：**\n"
+            f"- bar_by_bar_summary 覆盖此区间（至少K8-K1）\n"
             f"- 通道/波段/趋势结构识别、信号棒识别、趋势棒计数、反转判断\n"
             f"- market_phase 和 cycle_position 判断基于**此区间**的结构特征\n"
             f"- 各闸门节点的 bar_range 优先选取此区间\n\n"
-            f"**结构背景区 K41–K{n_bars}（更早期）：**\n"
-            f"- **只提取重要的 swing highs/lows（波段高点和低点）**\n"
-            f"- 将这些关键价位写入 `htf_context` 字段，格式示例：\n"
-            f"  「K65 高点 2685、K80 低点 2632、K92 高点 2698」\n"
-            f"- **禁止** 对 K41–K{n_bars} 做逐棒分析、通道识别、趋势结构、信号判断\n"
-            f"- **禁止** 在 bar_by_bar_summary 中涵盖 K41 及更早的 K 线\n"
-            f"- **禁止** 用 K41–K{n_bars} 的结构判断大时间框架（HTF）方向——"
-            f"其作用仅限于提供价格水平参考（潜在的支撑/阻力/磁力位）\n"
-            f"- K41–K{n_bars} 的高低价位只在 node 2.2 中作为**次要参考**，"
-            f"不作为 HTF 方向的否决依据\n\n"
-            f"## K线数据(序号1=最新已收盘K线,序号越大越早;不含当前未收盘K线;"
-            f"阳阴列由程序按收盘价与开盘价计算:收盘>开盘=阳线,收盘<开盘=阴线,相等=平)\n\n"
+            + (
+                f"**历史价位参考区 K41–K{n_bars}（程序已提取关键波段极值）：**\n"
+                f"- 程序已自动提取该区间的波段高低点：{htf_swing_text}\n"
+                f"- 你应将此信息写入 `htf_context` 字段（可适当补充描述，但以程序数据为准）\n"
+                f"- **禁止** 自行分析 K41–K{n_bars} 的逐棒结构、通道、趋势\n"
+                f"- **禁止** 在 bar_by_bar_summary 中涵盖 K41 及更早的 K 线\n"
+                f"- 这些价位只作为潜在的支撑/阻力/磁力位参考，不作为方向判断的否决依据\n\n"
+                if n_bars > 40 and htf_swing_text
+                else ""
+            )
+            + f"## K线数据表（最近{detail_limit}根，序号1=最新已收盘K线；阳阴列由程序计算）\n\n"
             f"{kline_table}\n\n"
             "## K线几何特征(程序预计算，仅作客观辅助；类型为单棒分类，不替代周期判断；"
             "基于当前 N 根已收盘 K 线，指标非全历史延续)\n\n"

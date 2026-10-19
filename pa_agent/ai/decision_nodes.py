@@ -1169,6 +1169,72 @@ def judge_always_in(frame: Any) -> NodeFill:
     bull_core = above_ratio >= ALWAYS_IN_SAME_SIDE_RATIO and slope_sign > 0
     bear_core = below_ratio >= ALWAYS_IN_SAME_SIDE_RATIO and slope_sign < 0
 
+    # P1-2: Short-term spike exception (Gemini fix)
+    # If full-window ratio is below 70% threshold but recent 6-8 bars show
+    # a strong spike (>=1 strong trend bar with range>2×ATR, AND >=6/8 bars
+    # hold EMA side), upgrade to AIL/AIS to avoid false rejection of spike starts.
+    spike_exception_bull = False
+    spike_exception_bear = False
+    spike_exception_reason = ""
+
+    if not bull_core and not bear_core:
+        N_spike = min(8, n)
+        spike_bars = list(bars)[:N_spike]
+        atr_val = float(atr14[0]) if atr14 and not math.isnan(float(atr14[0])) else None
+
+        if atr_val and atr_val > 0:
+            # Count strong trend bars (range > 2×ATR)
+            strong_bull_bars = 0
+            strong_bear_bars = 0
+            spike_above = 0
+            spike_below = 0
+
+            for i, bar in enumerate(spike_bars):
+                if i >= len(ema20):
+                    break
+                try:
+                    bar_range = float(bar.high) - float(bar.low)
+                    ema_val = float(ema20[i])
+                    close_val = float(bar.close)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+
+                if math.isnan(ema_val):
+                    continue
+
+                # Count EMA side
+                if close_val > ema_val:
+                    spike_above += 1
+                elif close_val < ema_val:
+                    spike_below += 1
+
+                # Count strong trend bars
+                if bar_range > 2.0 * atr_val:
+                    if close_val > float(bar.open):  # bullish trend bar
+                        strong_bull_bars += 1
+                    elif close_val < float(bar.open):  # bearish trend bar
+                        strong_bear_bars += 1
+
+            spike_valid = spike_above + spike_below
+            # Exception triggers: >=1 strong spike bar AND >=6/8 bars hold EMA side
+            if strong_bull_bars >= 1 and spike_above >= 6 and slope_sign >= 0:
+                spike_exception_bull = True
+                spike_exception_reason = (
+                    f"短期强突破例外：近{N_spike}根中{strong_bull_bars}根强势多头棒"
+                    f"（range>{2.0}×ATR），且{spike_above}/{spike_valid}根站稳EMA上方，"
+                    "判定为尖峰启动的Always In Long。"
+                )
+            elif strong_bear_bars >= 1 and spike_below >= 6 and slope_sign <= 0:
+                spike_exception_bear = True
+                spike_exception_reason = (
+                    f"短期强突破例外：近{N_spike}根中{strong_bear_bars}根强势空头棒"
+                    f"（range>{2.0}×ATR），且{spike_below}/{spike_valid}根守住EMA下方，"
+                    "判定为尖峰启动的Always In Short。"
+                )
+
+    bull_core = bull_core or spike_exception_bull
+    bear_core = bear_core or spike_exception_bear
+
     # ── Short-window divergence check ────────────────────────────────────────
     # When the full-window (20-bar) vote says AIL/AIS, check if the most recent
     # N_short bars are diverging from that conclusion.  This surfaces "weakening
@@ -1217,12 +1283,17 @@ def judge_always_in(frame: Any) -> NodeFill:
         branch = "AIL"
         gate3_ok = swing_confirms_bull and (shallow is None or shallow)
         strength = "（结构确认，强AIL）" if gate3_ok else "（结构弱/回撤深，弱AIL）"
-        reason = (
-            f"近{N}根K线中{above}根收盘高于EMA20（占比{above_ratio:.1%}"
-            f"≥{ALWAYS_IN_SAME_SIDE_RATIO:.0%}）；{slope_desc}；"
-            f"{swing_desc}；{pullback_desc}。"
-            f"判定为Always In Long（AIL）{strength}。"
-        )
+
+        # P1-2: Use spike exception reason if triggered
+        if spike_exception_bull:
+            reason = spike_exception_reason
+        else:
+            reason = (
+                f"近{N}根K线中{above}根收盘高于EMA20（占比{above_ratio:.1%}"
+                f"≥{ALWAYS_IN_SAME_SIDE_RATIO:.0%}）；{slope_desc}；"
+                f"{swing_desc}；{pullback_desc}。"
+                f"判定为Always In Long（AIL）{strength}。"
+            )
         if divergence_warning:
             reason += f" {divergence_warning}"
     elif bear_core:
@@ -1230,12 +1301,17 @@ def judge_always_in(frame: Any) -> NodeFill:
         branch = "AIS"
         gate3_ok = swing_confirms_bear and (shallow is None or shallow)
         strength = "（结构确认，强AIS）" if gate3_ok else "（结构弱/回撤深，弱AIS）"
-        reason = (
-            f"近{N}根K线中{below}根收盘低于EMA20（占比{below_ratio:.1%}"
-            f"≥{ALWAYS_IN_SAME_SIDE_RATIO:.0%}）；{slope_desc}；"
-            f"{swing_desc}；{pullback_desc}。"
-            f"判定为Always In Short（AIS）{strength}。"
-        )
+
+        # P1-2: Use spike exception reason if triggered
+        if spike_exception_bear:
+            reason = spike_exception_reason
+        else:
+            reason = (
+                f"近{N}根K线中{below}根收盘低于EMA20（占比{below_ratio:.1%}"
+                f"≥{ALWAYS_IN_SAME_SIDE_RATIO:.0%}）；{slope_desc}；"
+                f"{swing_desc}；{pullback_desc}。"
+                f"判定为Always In Short（AIS）{strength}。"
+            )
         if divergence_warning:
             reason += f" {divergence_warning}"
     else:
