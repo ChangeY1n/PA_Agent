@@ -280,6 +280,12 @@ class MainWindow(QMainWindow):
 
         # ── Menu bar ──────────────────────────────────────────────────────────
         menu_bar: QMenuBar = self.menuBar()  # type: ignore[assignment]
+        tools_menu = menu_bar.addMenu("工具")
+
+        batch_screen_action = QAction("批量自选筛选…", self)
+        batch_screen_action.triggered.connect(self._open_batch_screen_dialog)
+        tools_menu.addAction(batch_screen_action)
+
         settings_menu = menu_bar.addMenu("设置")
 
         open_settings_action = QAction("打开设置…", self)
@@ -3841,6 +3847,53 @@ class MainWindow(QMainWindow):
             status_bar.showMessage(
                 "未配置 API Key：请点击左上角「设置」填写后才能分析"
             )
+
+    def _open_batch_screen_dialog(self) -> None:
+        """Open the modeless BatchScreenDialog (工具菜单 → 批量自选筛选)。
+
+        窗口持引用防 GC；重复打开即 raise 已有实例。双击结果行经
+        _on_batch_pick_symbol 切换品种（深析记录在 records/pending，
+        切过去即可查看/增量分析）。
+        """
+        dlg = getattr(self, "_batch_screen_dialog", None)
+        if dlg is not None:
+            dlg.show()  # 关闭过的实例只是隐藏，重新显示而非新建
+            dlg.raise_()
+            dlg.activateWindow()
+            return
+
+        from pa_agent.gui.batch_screen_dialog import BatchScreenDialog
+
+        settings = getattr(self._ctx, "settings", None)
+        dlg = BatchScreenDialog(
+            settings,
+            get_timeframe=self._current_timeframe_text,
+            on_pick_symbol=self._on_batch_pick_symbol,
+            parent=self,
+        )
+        self._batch_screen_dialog = dlg
+        # 用绑定方法而非 lambda：MainWindow 析构时 Qt 自动断开以 self 为
+        # 接收者的连接，避免析构中途回调半失效对象（曾致 access violation）
+        dlg.destroyed.connect(self._on_batch_dialog_destroyed)
+        dlg.show()
+
+    def _on_batch_dialog_destroyed(self, _obj=None) -> None:
+        self._batch_screen_dialog = None
+
+    def _current_timeframe_text(self) -> str:
+        combo = getattr(self, "_tf_combo", None)
+        return combo.currentText().strip() if combo is not None else ""
+
+    def _on_batch_pick_symbol(self, symbol: str) -> None:
+        """批量结果表双击：切主窗口到该品种（与手选下拉同一路径）。"""
+        combo = getattr(self, "_symbol_combo", None)
+        if combo is None or not symbol:
+            return
+        if combo.currentText().strip() != symbol:
+            combo.setCurrentText(symbol)
+        else:
+            combo.setCurrentText("")  # 同代码时也要触发切换信号
+            combo.setCurrentText(symbol)
 
     def _open_settings_dialog(self, *, focus_api_key: bool = False) -> None:
         """Open the SettingsDialog; import lazily to avoid circular imports."""

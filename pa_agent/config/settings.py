@@ -123,6 +123,32 @@ class GeneralSettings(BaseModel):
         return out
 
 
+class BatchScreenSettings(BaseModel):
+    """批量自选筛选窗口（工具菜单 → 批量自选筛选）的运行参数与初筛提示词。
+
+    不进全局设置对话框——参数与提示词都在批量窗口内编辑，「开始」时保存。
+    """
+    model_config = ConfigDict(extra="ignore")
+
+    workers: int = Field(default=10, ge=1, le=30)
+    #: light=先轻量初筛再深析；full=全部直接完整两阶段
+    mode: Literal["light", "full"] = "light"
+    #: 只做多：初筛方向为空头的直接淘汰（A股无便利做空）
+    long_only: bool = True
+    #: 仅初筛不深析（校准/省钱巡视）
+    light_only: bool = False
+    #: 双初筛共识（Brooks 主筛 + 复核官并行，双通过才深析；token ×2 但更严）
+    dual_screen: bool = True
+    #: 初筛用 K 线根数（默认 80 = 前 60 根摘要 + 近 20 根明细 CSV）
+    light_bars: int = Field(default=80, ge=20, le=200)
+    #: 初筛 conviction 门槛（0=关；低于门槛不深析，省 token）
+    min_conviction: int = Field(default=0, ge=0, le=100)
+    #: 初筛 system 提示词覆盖（空 = light_screen 内置默认）
+    light_system_prompt: str = ""
+    #: 初筛 user 消息模板覆盖（空 = 内置默认；占位符见 LIGHT_SCREEN_USER_TEMPLATE）
+    light_user_template: str = ""
+
+
 class Settings(BaseModel):
     """Root settings object persisted to config/settings.json."""
     model_config = ConfigDict(extra="ignore")
@@ -136,6 +162,7 @@ class Settings(BaseModel):
     general: GeneralSettings = Field(default_factory=GeneralSettings)
     prompt: PromptSettings = Field(default_factory=PromptSettings)
     validation: ValidationSettings = Field(default_factory=ValidationSettings)
+    batch: BatchScreenSettings = Field(default_factory=BatchScreenSettings)
 
     @model_validator(mode="after")
     def _ensure_provider_profiles(self) -> "Settings":

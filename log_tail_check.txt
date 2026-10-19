@@ -1,0 +1,30 @@
+2026-10-14 12:41:02,778 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:41:02,804 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:41:05,007 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:41:07,626 WARNING  pa_agent.ai.stage2_normalizer: next_bar_prediction direction='neutral' not in tied winners ['bullish', 'bearish'] (probs={'bullish': 35, 'bearish': 35, 'neutral': 30})
+2026-10-14 12:41:09,527 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:41:09,557 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:41:09,689 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:41:09,700 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:41:09,715 WARNING  pa_agent.data.tdx_source: TDX 获取 K 线失败: request timed out
+2026-10-14 12:41:12,763 WARNING  batch_tdx: [215/253] FAIL 600938 : K线获取失败: TDX 未连接
+2026-10-14 12:41:13,557 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:41:13,577 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:41:20,889 WARNING  pa_agent.data.tdx_source: TDX 获取 K 线失败: request timed out
+2026-10-14 12:41:23,925 WARNING  batch_tdx: [223/253] FAIL 601118 : K线获取失败: TDX 未连接
+2026-10-14 12:41:32,147 WARNING  pa_agent.data.tdx_source: TDX 获取 K 线失败: request timed out
+2026-10-14 12:41:33,766 WARNING  pa_agent.orchestrator.two_stage: Stage 1 validation failed: category=c message=0 schema error(s): gate:gate_trace node ordering error: 0.1 should come before 3.2 (章节顺序
+2026-10-14 12:41:33,948 WARNING  batch_tdx: [231/253] FAIL 600986 : 未返回决策: {'type': 'validation_error', 'stage': 'stage1', 'category': 'c', 'message': '0 schema error(s): gate:gate_trace node ordering
+2026-10-14 12:41:35,198 WARNING  batch_tdx: [232/253] FAIL 603618 : K线获取失败: TDX 未连接
+2026-10-14 12:41:38,429 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:41:40,945 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:41:42,944 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-14 12:41:42,960 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:41:44,104 WARNING  pa_agent.ai.trace_normalize: bar_range='K58-K70' has reversed order (K58 before K70); K1=newest, K{N}=older. Auto-fixing to K70-K58 but this may indicate the model mis
+2026-10-14 12:41:44,128 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:41:44,663 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:41:44,672 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-14 12:41:45,642 WARNING  pa_agent.ai.trace_normalize: bar_range='K41-K100' has reversed order (K41 before K100); K1=newest, K{N}=older. Auto-fixing to K100-K41 but this may indicate the model 
+2026-10-14 12:41:45,840 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-14 12:41:45,846 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:41:45,849 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded

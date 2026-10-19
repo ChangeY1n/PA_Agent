@@ -68,6 +68,49 @@ def test_missing_api_key_leaves_api_key_blank(tmp_path):
     assert s.provider.api_key == ""
 
 
+def test_batch_defaults(tmp_path):
+    p = tmp_path / "settings.json"
+    s = load_settings(p)
+    assert s.batch.workers == 10
+    assert s.batch.mode == "light"
+    assert s.batch.long_only is True
+    assert s.batch.light_only is False
+    assert s.batch.dual_screen is True
+    assert s.batch.light_bars == 80
+    assert s.batch.min_conviction == 0
+    assert s.batch.light_system_prompt == ""
+    assert s.batch.light_user_template == ""
+
+
+def test_batch_round_trip(tmp_path):
+    """批量窗口参数与初筛提示词覆盖的 save → load 往返。"""
+    p = tmp_path / "settings.json"
+    original = Settings()
+    original.batch.workers = 3
+    original.batch.mode = "full"
+    original.batch.long_only = False
+    original.batch.light_only = True
+    original.batch.dual_screen = False
+    original.batch.light_bars = 40
+    original.batch.min_conviction = 55
+    original.batch.light_system_prompt = "自定义初筛 system 标准"
+    original.batch.light_user_template = "品种 {symbol}\n{kline_table}"
+    save_settings(original, p)
+    loaded = load_settings(p)
+    assert loaded.batch == original.batch
+
+
+def test_batch_legacy_json_without_section_uses_defaults(tmp_path):
+    """旧版 settings.json（无 batch 节）加载后用默认值，不报错。"""
+    p = tmp_path / "settings.json"
+    data = Settings().model_dump()
+    data.pop("batch", None)
+    p.write_text(json.dumps(data), encoding="utf-8")
+    s = load_settings(p)
+    assert s.batch.workers == 10
+    assert s.batch.min_conviction == 0
+
+
 def test_favorite_symbols_round_trip(tmp_path):
     """favorite_symbols persists through save/load, order preserved."""
     p = tmp_path / "settings.json"

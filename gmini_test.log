@@ -1,0 +1,30 @@
+12:13:23 [INFO] 自选股来源: 通达信自选股(zxg.blk), 共 403 只
+2026-10-14 12:13:54,989 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:13:54,989 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-14 12:14:55,879 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:15:04,396 WARNING  batch_tdx: [1/3] FAIL 600011 : 线程异常: JSONEncoder.__init__() got an unexpected keyword argument 'encoding'
+2026-10-14 12:15:14,031 WARNING  batch_tdx: [2/3] FAIL 600048 : 线程异常: JSONEncoder.__init__() got an unexpected keyword argument 'encoding'
+2026-10-14 12:15:31,125 WARNING  batch_tdx: [3/3] FAIL 600057 : 线程异常: JSONEncoder.__init__() got an unexpected keyword argument 'encoding'
+2026-10-14 12:15:31,126 ERROR    batch_tdx: 程序异常: JSONEncoder.__init__() got an unexpected keyword argument 'encoding'
+Traceback (most recent call last):
+  File "D:\PA_Agent\PAAGENT\PA_Agent\batch_ai_analyze_tdx.py", line 408, in <module>
+    main()
+    ~~~~^^
+  File "D:\PA_Agent\PAAGENT\PA_Agent\batch_ai_analyze_tdx.py", line 403, in main
+    run_batch(args.profile, symbols, args.timeframe, args.output, args.workers)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\PA_Agent\PAAGENT\PA_Agent\batch_ai_analyze_tdx.py", line 321, in run_batch
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, encoding="utf-8"), encoding="utf-8")
+                            ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\ProgramData\anaconda3\Lib\json\__init__.py", line 234, in dumps
+    return cls(
+           ~~~^
+        skipkeys=skipkeys, ensure_ascii=ensure_ascii,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        check_circular=check_circular, allow_nan=allow_nan, indent=indent,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        separators=separators, default=default, sort_keys=sort_keys,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        **kw).encode(obj)
+        ^^^^^
+TypeError: JSONEncoder.__init__() got an unexpected keyword argument 'encoding'

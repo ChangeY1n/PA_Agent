@@ -1,0 +1,359 @@
+12:05:37 [INFO] TDX 数据源已断开
+12:05:37 [INFO] 自选共 231 只，本次分析 231 只（offset=0）· 周期 1h · 100 根K线 · 10 并发 · 模式 light · 只做多 开 · 本地短路 开
+2026-10-19 12:06:01,516 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:01,527 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:06,609 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:06,633 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:07,756 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:07,765 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:10,182 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:10,187 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:14,546 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:14,549 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:20,430 WARNING  pa_agent.orchestrator.two_stage: Stage 2 validation failed: category=c message=1 schema error(s): '其他' is not one of ['trend_bull', 'trend_bear', 'doji', 'inside', 'outside_bull', 'outside_bear', 'flat', 'other']。bar_analysis.bar_type
+2026-10-19 12:06:36,929 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:36,932 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:37,145 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:37,146 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:37,146 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:37,147 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:44,581 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:44,583 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:44,604 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:44,606 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:48,916 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:48,920 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:06:48,926 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:48,926 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:06:49,213 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:49,219 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:49,971 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:06:49,992 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:06,158 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:06,165 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:07,302 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:07,320 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:12,709 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:07:12,710 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:07:25,014 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:25,014 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:25,017 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:25,017 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:29,134 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:07:29,135 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:29,146 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:07:29,152 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:38,450 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:38,478 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:39,683 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:39,683 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:39,684 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:39,684 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:47,273 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:47,274 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:47,275 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:47,275 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:07:50,501 WARNING  pa_agent.orchestrator.two_stage: Stage 2 validation failed: category=a message=JSON syntax error at 1:97: Expecting property name enclosed in double quotes。阶段 JSON 正文约 3712 字符，在输出过程中被截断（未闭合对象约 1 层，解析位置 1:97）。 常见原因：completion 额度主要在思考区用尽，正文 JSON 只写了一小段。 completion_tokens≈1626，思考区约 0 字。
+2026-10-19 12:08:06,475 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:06,475 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:06,476 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:06,477 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:07,494 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:07,495 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:22,651 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:22,652 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:22,661 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:22,661 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:24,875 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:24,876 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:33,694 WARNING  pa_agent.data.tdx_source: TDX 获取 K 线失败: request timed out
+2026-10-19 12:08:37,877 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:37,879 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:37,880 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:37,880 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:39,046 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:08:39,049 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:39,052 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:39,062 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:08:39,062 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:39,062 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:41,474 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:41,475 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:08:44,735 ERROR    pa_agent: DeepSeekClient stream error after 1545 ms: peer closed connection without sending complete message body (incomplete chunked read) (chunks_received=1, reasoning_chars=0, content_chars=0)
+2026-10-19 12:08:44,735 ERROR    pa_agent: DeepSeekClient stream error after 2436 ms: peer closed connection without sending complete message body (incomplete chunked read) (chunks_received=252, reasoning_chars=0, content_chars=538)
+2026-10-19 12:08:44,736 WARNING  pa_agent.orchestrator.two_stage: [stage2] 网络错误（第 1/3 次尝试）：peer closed connection without sending complete message body (incomplete chunked read)，2.0s 后自动重试
+2026-10-19 12:08:44,736 WARNING  pa_agent.orchestrator.two_stage: [stage1] 网络错误（第 1/3 次尝试）：peer closed connection without sending complete message body (incomplete chunked read)，2.0s 后自动重试
+2026-10-19 12:08:44,737 ERROR    pa_agent: DeepSeekClient stream error after 3007 ms: peer closed connection without sending complete message body (incomplete chunked read) (chunks_received=191, reasoning_chars=0, content_chars=460)
+2026-10-19 12:08:44,737 ERROR    pa_agent: DeepSeekClient stream error after 1693 ms: peer closed connection without sending complete message body (incomplete chunked read) (chunks_received=1, reasoning_chars=0, content_chars=0)
+2026-10-19 12:08:44,738 ERROR    pa_agent: DeepSeekClient stream error after 2637 ms: peer closed connection without sending complete message body (incomplete chunked read) (chunks_received=237, reasoning_chars=0, content_chars=506)
+2026-10-19 12:08:44,738 ERROR    pa_agent: DeepSeekClient stream error after 1865 ms: peer closed connection without sending complete message body (incomplete chunked read) (chunks_received=49, reasoning_chars=0, content_chars=95)
+2026-10-19 12:08:44,738 ERROR    pa_agent: DeepSeekClient stream error after 3719 ms: peer closed connection without sending complete message body (incomplete chunked read) (chunks_received=345, reasoning_chars=0, content_chars=741)
+2026-10-19 12:08:44,739 ERROR    pa_agent: DeepSeekClient stream error after 1700 ms: peer closed connection without sending complete message body (incomplete chunked read) (chunks_received=1, reasoning_chars=0, content_chars=0)
+2026-10-19 12:08:44,739 WARNING  pa_agent.orchestrator.two_stage: [stage1] 网络错误（第 1/3 次尝试）：peer closed connection without sending complete message body (incomplete chunked read)，2.0s 后自动重试
+2026-10-19 12:08:44,739 WARNING  pa_agent.orchestrator.two_stage: [stage2] 网络错误（第 1/3 次尝试）：peer closed connection without sending complete message body (incomplete chunked read)，2.0s 后自动重试
+2026-10-19 12:08:44,740 WARNING  pa_agent.orchestrator.two_stage: [stage2] 网络错误（第 1/3 次尝试）：peer closed connection without sending complete message body (incomplete chunked read)，2.0s 后自动重试
+2026-10-19 12:08:44,740 WARNING  pa_agent.ai.light_screen: light screen call failed (attempt 1): peer closed connection without sending complete message body (incomplete chunked read)
+2026-10-19 12:08:44,740 WARNING  pa_agent.orchestrator.two_stage: [stage2] 网络错误（第 1/3 次尝试）：peer closed connection without sending complete message body (incomplete chunked read)，2.0s 后自动重试
+2026-10-19 12:08:44,740 WARNING  pa_agent.orchestrator.two_stage: [stage1] 网络错误（第 1/3 次尝试）：peer closed connection without sending complete message body (incomplete chunked read)，2.0s 后自动重试
+2026-10-19 12:09:03,006 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:03,022 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:14,183 WARNING  pa_agent.orchestrator.two_stage: Stage 1 validation failed: category=a message=JSON syntax error at 15:52: Invalid control character at
+2026-10-19 12:09:16,268 WARNING  pa_agent.orchestrator.two_stage: Stage 2 validation failed: category=a message=JSON syntax error at 1:118: Expecting property name enclosed in double quotes。阶段 JSON 正文约 3696 字符，在输出过程中被截断（未闭合对象约 1 层，解析位置 1:118）。 常见原因：completion 额度主要在思考区用尽，正文 JSON 只写了一小段。 completion_tokens≈1721，思考区约 0 字。
+2026-10-19 12:09:20,492 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:09:20,492 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:20,493 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:09:20,493 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:27,986 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:09:27,987 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:27,987 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:27,987 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:09:27,988 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:27,988 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:38,090 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:38,093 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:43,256 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:43,258 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:43,258 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:43,259 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:43,445 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:09:43,446 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:43,446 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:43,446 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:09:43,446 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:43,446 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:52,777 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:52,779 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:09:52,781 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:09:52,782 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:10:17,112 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:10:17,115 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:10:29,573 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:10:29,577 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:10:42,157 WARNING  pa_agent.ai.trace_normalize: bar_range='K70-K94' has reversed order (K70 before K94); K1=newest, K{N}=older. Auto-fixing to K94-K70 but this may indicate the model misinterprets bar numbering direction.
+2026-10-19 12:10:43,977 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:10:43,977 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:10:43,978 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:10:43,978 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:10:52,004 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:10:52,006 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:10:52,009 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:10:52,019 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:10:52,020 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:10:52,020 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:10:53,162 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:10:53,162 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:10:53,173 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:10:53,174 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:10:54,092 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:10:54,095 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:00,202 WARNING  pa_agent.ai.trace_normalize: bar_range='K1-K2' has reversed order (K1 before K2); K1=newest, K{N}=older. Auto-fixing to K2-K1 but this may indicate the model misinterprets bar numbering direction.
+2026-10-19 12:11:00,468 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:11:00,470 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:00,473 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:00,490 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:11:00,493 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:00,493 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:03,055 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:03,058 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:05,501 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:11:05,503 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:05,514 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:11:05,515 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:10,839 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:10,859 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:31,072 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:31,072 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:31,097 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:31,101 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:35,913 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:35,914 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:35,942 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:35,943 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:36,671 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:36,680 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:40,902 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:40,915 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:50,961 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:50,966 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:50,972 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:50,974 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:53,052 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:11:53,053 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:53,054 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:53,055 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:11:53,056 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:53,056 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:57,780 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:11:57,795 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:12:18,138 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:12:18,138 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:12:23,681 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:12:23,683 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:12:23,683 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:12:23,683 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:12:36,593 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:12:36,605 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:12:36,754 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:12:36,755 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:12:42,604 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:12:42,605 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:12:53,218 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:12:53,219 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:12:53,220 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:12:53,221 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded
+2026-10-19 12:12:53,221 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 12:12:53,221 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+
+==============================================================================
+批量筛选完成：231 只 · 周期 1h · 模式 light · 耗时 7.6 分钟
+有交易机会 2 · 观望 94 · 失败 5 · 初筛淘汰 130
+token 用量：初筛 1,455,455 + 完整分析 13,697,911 = 15,153,366
+估算节省：54%（全部直接完整分析约需 3296 万 token）
+==============================================================================
+
+代码      方向    单型               入场       止损       目标    信心  理由
+------------------------------------------------------------------------------
+603737  做多    突破单           23.19    22.27    24.60    46  结论：以 K1 高点上方1跳动挂多头突破单，目标 24.60，止损 22
+300827  做多    限价单           25.13    25.08    25.85    46  结论：宽通道过渡期沿多头方向做突破单，等25.32确认后再入场。依据：K
+
+失败列表:
+  600312: validation_error: 1 schema error(s): '其他' is not one of ['trend_bull', 'trend_bear', 'doji', 'inside', 'outside_bull', 'outside_bear', 'flat', 'other']。bar_analysis.bar_type
+  000807: validation_error: JSON syntax error at 1:97: Expecting property name enclosed in double quotes。阶段 JSON 正文约 3712 字符，在输出过程中被截断（未闭合对象约 1 层，解析位置 1:97）。 常见原因：completion 额度主要在思考区用尽，正文 JSON 只写了一小段。 completion_tokens≈1626，思考区约 0 字。
+  600938: TDX 获取 K 线失败: request timed out
+  000519: validation_error: JSON syntax error at 15:52: Invalid control character at
+  000498: validation_error: JSON syntax error at 1:118: Expecting property name enclosed in double quotes。阶段 JSON 正文约 3696 字符，在输出过程中被截断（未闭合对象约 1 层，解析位置 1:118）。 常见原因：completion 额度主要在思考区用尽，正文 JSON 只写了一小段。 completion_tokens≈1721，思考区约 0 字。
+
+初筛淘汰明细:
+  600163: （只做多模式：初筛方向为空头）
+  600161: 无趋势且价格位于区间中部，最近8根K线多为小实体重叠于EMA20附近，无近端入场点，属漂移行情
+  600153: 无趋势且无清晰区间的漂移行情，价格反复穿越走平的EMA20，属铁丝网震荡，不值得深度分析
+  600057: EMA20走平，价格反复穿越均线，K线小实体互相重叠，属铁丝网行情，无近端结构
+  600196: 近期从24.2高点一路阴跌至23附近，K线多为小实体互相重叠且EMA20走平，属窄幅漂移的弱下跌结构
+  600064: 无趋势无清晰区间边界信号，价格处于漂移中段，缺乏近端入场结构
+  600150: （只做多模式：初筛方向为空头）
+  600315: （只做多模式：初筛方向为空头）
+  600380: 近期K线实体普遍偏小且高度重叠，EMA20近乎走平，既无清晰趋势通道，也无规则震荡区间的边界信号，属
+  600583: （只做多模式：初筛方向为空头）
+  600998: 既无明确趋势也无清晰区间边界，EMA20走平且价格反复穿越，属铁丝网/漂移行情，缺乏近端可交易结构
+  601139: EMA20持续下行但近20根K线在6.26-6.37窄幅重叠，无突破跟随也无清晰区间边界信号，属铁丝
+  601360: （只做多模式：初筛方向为空头）
+  601595: （只做多模式：初筛方向为空头）
+  601965: EMA20走平、价格反复穿越均线，属无趋势无清晰区间的漂移行情，无近端入场结构
+  601918: （只做多模式：初筛方向为空头）
+  601600: EMA20趋平、价格反复穿越EMA20，近期为上下影交织的窄幅重叠区，既无清晰趋势通道也无明确区间边
+  603000: 前期震荡上行结构已被破坏，近期连续阴线走弱但仍在区间中部，属漂移下行而非明确突破或通道回调，缺乏可交
+  603002: （只做多模式：初筛方向为空头）
+  603099: （只做多模式：初筛方向为空头）
+  603171: （只做多模式：初筛方向为空头）
+  603529: （只做多模式：初筛方向为空头）
+  603626: （只做多模式：初筛方向为空头）
+  603888: 自19上方高点回落后连续收阴、EMA20走平转下且价格反复在其下方运行，属无近端入场点的下跌中段漂移
+  605090: EMA20持续下行且价格反复穿越均线，属窄幅重叠的漂移下行，无清晰回调企稳或区间边界反转结构，近端入
+  000612: （只做多模式：初筛方向为空头）
+  603882: （只做多模式：初筛方向为空头）
+  000681: （只做多模式：初筛方向为空头）
+  603596: （只做多模式：初筛方向为空头）
+  000833: （只做多模式：初筛方向为空头）
+  000933: （只做多模式：初筛方向为空头）
+  000963: EMA20走平、无趋势也无清晰区间边界，近期为铁丝网式重叠震荡，无近端方向性入场结构
+  002120: （只做多模式：初筛方向为空头）
+  002174: （只做多模式：初筛方向为空头）
+  002226: EMA20走平偏下、价格贴近均线反复穿越，近期无清晰通道或区间结构，多根小实体重叠属铁丝网式无方向漂
+  002246: （只做多模式：初筛方向为空头）
+  002252: EMA20持续下行且价格位于其下方，但近端K线为小实体互相重叠的铁丝网形态，既无突破也无明确区间边界
+  002262: EMA20走平且价格反复穿越，属窄幅重叠/漂移行情，无清晰趋势通道也无明确区间边界信号，不具备近端入
+  002268: 处于下降趋势中段，但当前K线窄幅重叠且远离EMA20，既无有效回调企稳形态也无强突破，属于漂移式慢跌
+  002292: （只做多模式：初筛方向为空头）
+  002354: （只做多模式：初筛方向为空头）
+  002366: （只做多模式：初筛方向为空头）
+  002532: EMA20持续走平向下但价格贴合并反复穿越，最近多为小实体重叠的窄幅漂移，既非清晰区间边界也无企稳信
+  002639: （只做多模式：初筛方向为空头）
+  002739: （只做多模式：初筛方向为空头）
+  002773: （只做多模式：初筛方向为空头）
+  002755: （只做多模式：初筛方向为空头）
+  002882: （只做多模式：初筛方向为空头）
+  300002: 近期为弱势阴跌漂移，EMA20附近反复穿行且无清晰通道/区间边界信号，缺乏近端可交易结构
+  300001: 价格持续运行于EMA20下方、EMA20 下行，但近期为小实体重叠的窄幅盘整，既非清晰回调企稳也非强
+  300008: EMA20基本走平，价格在6.0-6.2间窄幅重叠、反复穿越均线，属于铁丝网/漂移行情，无近端明确入
+  300009: （只做多模式：初筛方向为空头）
+  300122: EMA20持续下行且价格始终位于其下方，处于下跌趋势的中后段，既无近端回踩入场点也无明确区间边界反转
+  300209: （只做多模式：初筛方向为空头）
+  300364: （只做多模式：初筛方向为空头）
+  300657: EMA20持续下行且价格在其下方，但近期K线小实体重叠、反弹无量，既无清晰区间也无近端做空入场结构，
+  300741: （只做多模式：初筛方向为空头）
+  300765: 近20根K线多为小实体重叠、EMA20缓慢下行且价格反复穿越，既无清晰区间边界也无近端顺势入场点，属
+  300821: （只做多模式：初筛方向为空头）
+  300957: 铁丝网式窄幅重叠，无趋势无清晰区间边界信号，不值得进入深度分析
+  301207: 上下穿EMA20的区间中部漂移，多空重叠无方向性结构，且价格不处于区间边界或趋势回调入场位，属于典型
+  000917: 最新K线为连续第4根阴线且收在最低位附近，价格持续低于EMA20且EMA20向下倾斜，属于趋势中段的
+  600863: （只做多模式：初筛方向为空头）
+  600977: （只做多模式：初筛方向为空头）
+  603393: 下跌后进入铁丝网式窄幅重叠，无清晰区间边界或近端入场结构，方向不明
+  603690: （只做多模式：初筛方向为空头）
+  000006: （只做多模式：初筛方向为空头）
+  000513: （只做多模式：初筛方向为空头）
+  000887: （只做多模式：初筛方向为空头）
+  000869: EMA20基本走平，近期K线多为小实体互相重叠、无明确趋势或清晰区间边界，近端无顺势入场点，属漂移行
+  000949: （只做多模式：初筛方向为空头）
+  000968: EMA20走平且价格反复上下穿越，当前处于下跌后的窄幅重叠整理区（序号1-5小实体互相重叠），既无清
+  000973: （只做多模式：初筛方向为空头）
+  000930: （只做多模式：初筛方向为空头）
+  001236: （只做多模式：初筛方向为空头）
+  002044: EMA20走平、价格与其反复缠绕，近期为窄幅重叠的铁丝网结构，无近端可交易的方向性设置
+  002074: （只做多模式：初筛方向为空头）
+  002080: （只做多模式：初筛方向为空头）
+  002129: （只做多模式：初筛方向为空头）
+  002131: （只做多模式：初筛方向为空头）
+  002212: （只做多模式：初筛方向为空头）
+  002245: （只做多模式：初筛方向为空头）
+  002326: （只做多模式：初筛方向为空头）
+  002379: （只做多模式：初筛方向为空头）
+  002382: （只做多模式：初筛方向为空头）
+  002400: （只做多模式：初筛方向为空头）
+  002439: （只做多模式：初筛方向为空头）
+  002430: （只做多模式：初筛方向为空头）
+  002480: （只做多模式：初筛方向为空头）
+  002531: （只做多模式：初筛方向为空头）
+  002558: （只做多模式：初筛方向为空头）
+  002745: （只做多模式：初筛方向为空头）
+  002840: （只做多模式：初筛方向为空头）
+  002961: K线51起由21元附近急跌至13.3，近期K线1-4为小实体互相重叠、无企稳或反转信号，价格远离EM
+  300073: （只做多模式：初筛方向为空头）
+  300083: （只做多模式：初筛方向为空头）
+  300133: （只做多模式：初筛方向为空头）
+  300142: （只做多模式：初筛方向为空头）
+  300277: EMA20走平向下、价格被压制于其下方，但近期多根小实体K线互相重叠、无清晰通道或区间边界，属铁丝网
+  300251: 价格已跌破EMA20且远离任何结构性支撑，近期为连续阴线趋势下行，既非回调企稳也非区间边界停顿，属于
+  300284: （只做多模式：初筛方向为空头）
+  300358: （只做多模式：初筛方向为空头）
+  300413: （只做多模式：初筛方向为空头）
+  300418: （只做多模式：初筛方向为空头）
+  300450: （只做多模式：初筛方向为空头）
+  600048: （只做多模式：初筛方向为空头）
+  600110: （只做多模式：初筛方向为空头）
+  600284: EMA20走平于5.12-5.14附近，价格在5.10-5.18间来回穿越均线，多根小实体重叠，属无
+  600310: K线小实体互相重叠，EMA20走平，属铁丝网式漂移行情，无近端方向性入场点
+  600403: （只做多模式：初筛方向为空头）
+  600489: （只做多模式：初筛方向为空头）
+  600521: 价格连续多根收于EMA20下方且EMA20走平转下，属趋势转弱后的中段漂移，近端无明确回调企稳或区间
+  600572: EMA20走平且价格反复穿越，K线小实体重叠无清晰通道或区间边界信号，属可上可下的漂移行情，不值得细
+  600641: （只做多模式：初筛方向为空头）
+  600330: （只做多模式：初筛方向为空头）
+  600864: EMA20已走平，价格在5.73-6.00区间反复穿越均线，近期K线实体小、互相重叠，无清晰趋势结构
+  600866: EMA20缓降且价格全程位于其下，但下跌节奏为连续小实体阴线叠加、缺乏清晰通道回调结构或强突破，属弱
+  600903: （只做多模式：初筛方向为空头）
+  600982: 既无清晰趋势通道也无明确区间边界，价格反复穿越并徘徊于EMA20下方，属窄幅漂移，缺乏近端入场结构
+  600986: （只做多模式：初筛方向为空头）
+  601069: （只做多模式：初筛方向为空头）
+  601118: （只做多模式：初筛方向为空头）
+  601949: （只做多模式：初筛方向为空头）
+  603108: （只做多模式：初筛方向为空头）
+  603113: （只做多模式：初筛方向为空头）
+  601128: 近期K线小实体互相重叠、EMA20基本走平于6.19，价格在6.06-6.34间漂移反复穿越EMA2
+  603456: （只做多模式：初筛方向为空头）
+  603093: EMA20走平且价格反复穿越，近期为窄幅重叠的漂移行情，既无趋势通道也无清晰区间边界，不构成近端入场
+  603567: （只做多模式：初筛方向为空头）
+  603997: （只做多模式：初筛方向为空头）
+
+完整结果: batch_analysis_results\screen_20261019_121314\summary.json
+每只股票的完整分析已存入 records/pending，GUI 切到该股可查看/增量分析

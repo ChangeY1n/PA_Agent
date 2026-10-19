@@ -98,9 +98,9 @@ def test_no_local_gate_argument_keeps_default(orchestrator_deps):
 
 
 def test_local_no_trade_gate_rule(monkeypatch):
-    """批量脚本规则：仅在 router 零策略文件时拦截（neutral+spike 等）。"""
+    """批量筛选规则：仅在 router 零策略文件时拦截（neutral+spike 等）。"""
     import pa_agent.ai.router as router_mod
-    import batch_watchlist_screen as bws
+    from pa_agent.batch import screen_runner as bws
 
     loaded: list[str] = []
     monkeypatch.setattr(router_mod, "route_strategy_files", lambda s1: list(loaded))

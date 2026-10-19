@@ -580,7 +580,16 @@ STAGE2_FULL_STRATEGY_PROMPT_TXT_FILES: tuple[str, ...] = (
 
 
 def _fmt_feature(value: float | None) -> str:
-    return "N/A" if value is None else f"{value:.3f}"
+    return "N/A" if value is None else f"{value:.2f}"
+
+
+def _fmt_price(value: float) -> str:
+    """价格/指标紧凑格式：最多两位小数并剥离尾零（23.10→23.1，22.00→22）。
+
+    K 线表每只股票独有、几乎全部计为缓存未命中（全价 token），对齐填充与
+    冗余小数位是纯浪费；数值本身保持与两位小数报价一致。
+    """
+    return f"{value:.2f}".rstrip("0").rstrip(".") or "0"
 
 
 def stage1_prompt_txt_files() -> list[str]:
@@ -736,23 +745,26 @@ class PromptAssembler:
 
     @staticmethod
     def _render_kline_table(frame: KlineFrame, limit: int | None = None) -> str:
-        """Render the K-line data as a text table (newest bar first)."""
+        """Render the K-line data as a compact text table (newest bar first).
+
+        紧凑编码：列间单空格分隔、不做对齐填充、价格/指标剥尾零——此表
+        每股独有（缓存未命中全价计费），填充空格与冗余小数是纯 token 浪费。
+        """
         lines = [
-            "序号 | 时间                | 开盘价    | 最高价    | 最低价    | 收盘价    | 阳阴 | 成交量    | EMA20     | ATR14",
-            "-----+--------------------+----------+----------+----------+----------+------+----------+-----------+----------",
+            "序号 | 时间 | 开盘价 | 最高价 | 最低价 | 收盘价 | 阳阴 | 成交量 | EMA20 | ATR14",
         ]
         bars = frame.bars[:limit] if limit is not None else frame.bars
         for i, bar in enumerate(bars):
             ema = frame.indicators.ema20[i]
             atr = frame.indicators.atr14[i]
-            ema_str = f"{ema:.4f}" if not math.isnan(ema) else "N/A"
-            atr_str = f"{atr:.4f}" if not math.isnan(atr) else "N/A"
+            ema_str = _fmt_price(ema) if not math.isnan(ema) else "N/A"
+            atr_str = _fmt_price(atr) if not math.isnan(atr) else "N/A"
             yang_yin = bar_candle_direction_label(bar)
             dt = format_epoch_for_display(bar.ts_open, short=True)
             lines.append(
-                f"{bar.seq:<4} | {dt:<19} | {bar.open:<9.4f} | {bar.high:<9.4f} | "
-                f"{bar.low:<9.4f} | {bar.close:<9.4f} | {yang_yin:<4} | {bar.volume:<9.0f} | "
-                f"{ema_str:<10} | {atr_str}"
+                f"{bar.seq} | {dt} | {_fmt_price(bar.open)} | {_fmt_price(bar.high)} | "
+                f"{_fmt_price(bar.low)} | {_fmt_price(bar.close)} | {yang_yin} | {bar.volume:.0f} | "
+                f"{ema_str} | {atr_str}"
             )
         lines.append(_KLINE_INDICATOR_NOTE)
         return "\n".join(lines)
@@ -763,25 +775,24 @@ class PromptAssembler:
         shown = limit if limit is not None else len(frame.bars)
         lines = [
             f"（几何特征：最近 {shown} 根已收盘 K 线；多棒形态已用完整窗口计算）",
-            "序号 | 类型          | 实体比 | 上影比 | 下影比 | 收盘位置 | Range/ATR | EMA关系 | 与前棒重叠 | ii/iii | ioi | 微双 | 缺口 | EMA缺口数 | 近5突破 | 后续",
-            "-----+---------------+--------+--------+--------+----------+-----------+---------+------------+--------+-----+------+-------+-----------+---------+------",
+            "序号 | 类型 | 实体比 | 上影比 | 下影比 | 收盘位置 | Range/ATR | EMA关系 | 与前棒重叠 | ii/iii | ioi | 微双 | 缺口 | EMA缺口数 | 近5突破 | 后续",
         ]
         for feat in compute_kline_geometry_features(frame, limit=limit):
             lines.append(
-                f"{feat.seq:<4} | {feat.bar_type:<13} | "
-                f"{_fmt_feature(feat.body_ratio):<6} | "
-                f"{_fmt_feature(feat.upper_wick_ratio):<6} | "
-                f"{_fmt_feature(feat.lower_wick_ratio):<6} | "
-                f"{_fmt_feature(feat.close_position):<8} | "
-                f"{_fmt_feature(feat.range_atr_ratio):<9} | "
-                f"{feat.ema_relation:<7} | "
-                f"{_fmt_feature(feat.overlap_prev_ratio):<10} | "
-                f"{feat.inside_sequence:<6} | "
-                f"{str(feat.ioi_pattern):<3} | "
-                f"{feat.micro_double:<4} | "
-                f"{feat.gap_bar:<5} | "
-                f"{feat.ema_gap_count:<9} | "
-                f"{feat.breakout_prev:<7} | "
+                f"{feat.seq} | {feat.bar_type} | "
+                f"{_fmt_feature(feat.body_ratio)} | "
+                f"{_fmt_feature(feat.upper_wick_ratio)} | "
+                f"{_fmt_feature(feat.lower_wick_ratio)} | "
+                f"{_fmt_feature(feat.close_position)} | "
+                f"{_fmt_feature(feat.range_atr_ratio)} | "
+                f"{feat.ema_relation} | "
+                f"{_fmt_feature(feat.overlap_prev_ratio)} | "
+                f"{feat.inside_sequence} | "
+                f"{str(feat.ioi_pattern)} | "
+                f"{feat.micro_double} | "
+                f"{feat.gap_bar} | "
+                f"{feat.ema_gap_count} | "
+                f"{feat.breakout_prev} | "
                 f"{feat.follow_through_1_2}"
             )
         lines.append(_KLINE_INDICATOR_NOTE)

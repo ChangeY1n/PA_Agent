@@ -1,0 +1,50 @@
+14:32:48 [INFO] TDX 数据源已断开
+14:32:48 [INFO] 自选共 231 只，本次分析 20 只（offset=0）· 周期 1h · 100 根K线 · 10 并发 · 模式 light · 只做多 开 · conviction门槛 0 · 本地短路 开
+2026-10-19 14:33:16,749 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:16,770 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:18,489 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:18,499 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:18,640 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:18,659 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:18,706 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:18,708 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:20,334 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:20,335 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:20,336 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:20,336 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:29,564 WARNING  pa_agent.orchestrator.two_stage: Stage 2 validation failed: category=a message=JSON syntax error at 1:89: Expecting property name enclosed in double quotes。阶段 JSON 正文约 3439 字符，在输出过程中被截断（未闭合对象约 1 层，解析位置 1:89）。 常见原因：completion 额度主要在思考区用尽，正文 JSON 只写了一小段。 completion_tokens≈1513，思考区约 0 字。
+2026-10-19 14:33:31,924 WARNING  pa_agent.ai.trace_normalize: bar_range='K43-K91' has reversed order (K43 before K91); K1=newest, K{N}=older. Auto-fixing to K91-K43 but this may indicate the model misinterprets bar numbering direction.
+2026-10-19 14:33:31,925 WARNING  pa_agent.ai.trace_normalize: bar_range='K43-K91' has reversed order (K43 before K91); K1=newest, K{N}=older. Auto-fixing to K91-K43 but this may indicate the model misinterprets bar numbering direction.
+2026-10-19 14:33:31,925 WARNING  pa_agent.ai.trace_normalize: bar_range='K43-K91' has reversed order (K43 before K91); K1=newest, K{N}=older. Auto-fixing to K91-K43 but this may indicate the model misinterprets bar numbering direction.
+2026-10-19 14:33:31,925 WARNING  pa_agent.ai.trace_normalize: bar_range='K43-K91' has reversed order (K43 before K91); K1=newest, K{N}=older. Auto-fixing to K91-K43 but this may indicate the model misinterprets bar numbering direction.
+2026-10-19 14:33:48,088 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:48,089 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:49,098 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:49,100 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:50,795 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:50,803 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:51,301 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:51,301 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:52,255 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-19 14:33:52,257 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+
+==============================================================================
+批量筛选完成：20 只 · 周期 1h · 模式 light · 耗时 1.2 分钟
+有交易机会 0 · 观望 15 · 失败 1 · 初筛淘汰 4
+token 用量：初筛 32,675 + 完整分析 2,048,736 = 2,081,411
+估算节省：24%（全部直接完整分析约需 273 万 token）
+==============================================================================
+
+本次没有筛选出交易机会（全部观望/不下单）
+
+失败列表:
+  000519: validation_error: JSON syntax error at 1:89: Expecting property name enclosed in double quotes。阶段 JSON 正文约 3439 字符，在输出过程中被截断（未闭合对象约 1 层，解析位置 1:89）。 常见原因：completion 额度主要在思考区用尽，正文 JSON 只写了一小段。 completion_tokens≈1513，思考区约 0 字。
+
+初筛淘汰明细:
+  600380: 序号14大实体trend_bull突破10.18前高（高10.26收10.20），量能放大至7.5万
+  600057: 序号10-12空头下探至5.86-5.88形成双底，与前期5.84支撑呼应；序号13-15连续tre
+  600315: K线17探至17.78（前低附近）后，K线18放量outside_bull强势反转收复，K线19-2
+  300765: 序号14放量大实体trend_bull突破44.50一线（量8.3万，实体比0.71），随后15-1
+
+完整结果: batch_analysis_results\screen_20261019_143403\summary.json
+每只股票的完整分析已存入 records/pending，GUI 切到该股可查看/增量分析

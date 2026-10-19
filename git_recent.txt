@@ -1,0 +1,20 @@
+COMMIT b374c3f feat: --symbols to re-run specific watchlist stocks
+
+ batch_watchlist_screen.py | 21 ++++++++++++++++++---
+ 1 file changed, 18 insertions(+), 3 deletions(-)
+COMMIT 03eb53c chore: raise batch screening default workers 5 -> 10
+
+ batch_watchlist_screen.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+COMMIT bfeeda6 feat: light pre-screen mode for batch watchlist screening (~50% token cut)
+
+ batch_watchlist_screen.py       | 130 ++++++++++++++++++++---
+ pa_agent/ai/light_screen.py     | 224 ++++++++++++++++++++++++++++++++++++++++
+ tests/unit/test_light_screen.py | 150 +++++++++++++++++++++++++++
+ 3 files changed, 491 insertions(+), 13 deletions(-)
+COMMIT 6c68799 feat: add local_gate hook to skip stage2 when stage1 diagnosis is a rubber stamp
+
+ batch_watchlist_screen.py                         |  44 +++++++-
+ pa_agent/orchestrator/two_stage.py                |  30 +++++-
+ tests/integration/test_local_gate_shortcircuit.py | 123 ++++++++++++++++++++++
+ 3 files changed, 189 insertions(+), 8 deletions(-)

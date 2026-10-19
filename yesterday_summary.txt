@@ -1,0 +1,4 @@
+screen_20261013_120206 -> {'batch_time': '2026-10-13T12:02:06.426472', 'mode': 'light', 'total': 100, 'failed': 58}
+screen_20261013_123500 -> {'batch_time': '2026-10-13T12:35:00.868678', 'mode': 'light', 'total': 100, 'failed': 1}
+screen_20261013_124002 -> {'batch_time': '2026-10-13T12:40:02.045399', 'mode': 'light', 'total': 100, 'failed': 5}
+screen_20261013_124136 -> {'batch_time': '2026-10-13T12:41:36.092867', 'mode': 'light', 'total': 58, 'failed': 9}

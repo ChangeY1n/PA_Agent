@@ -65,7 +65,8 @@ def test_parse_fenced_and_surrounding_text():
 def test_parse_defaults_and_conviction_clamp():
     r = parse_light_screen_reply('{"pass": true}')
     assert r is not None
-    assert r["direction"] == "neutral" and r["conviction"] == 0
+    assert "direction" not in r  # 新初筛只做多不输出方向，不再补默认值
+    assert r["conviction"] == 0
     r2 = parse_light_screen_reply('{"pass": true, "conviction": 250}')
     assert r2["conviction"] == 100
 
@@ -83,12 +84,30 @@ def test_parse_rejects_garbage():
 def test_messages_compact_and_bar_limited():
     msgs = build_light_screen_messages(_frame(80), bar_limit=60)
     assert [m["role"] for m in msgs] == ["system", "user"]
-    # 60 根 ×（K表+几何表）远小于完整两阶段 prompt
     total_chars = sum(len(m["content"]) for m in msgs)
-    assert total_chars < 16_000, f"初筛 prompt 过大: {total_chars} chars"
-    # 只包含前 60 根：最后一行行首是序号 60，且没有 61 开头的行
-    assert "\n60 " in msgs[1]["content"]
-    assert "\n61 " not in msgs[1]["content"]
+    assert total_chars < 8_000, f"初筛 prompt 过大: {total_chars} chars"
+    user = msgs[1]["content"]
+    # 结构：远期背景摘要 + 近 20 根正序明细，不再有 61 开头的明细行
+    assert "## 远期背景" in user and "## 近期K线明细" in user
+    assert "\n20," in user and "\n21," not in user
+    assert "字段：序号,最高,最低,收盘,量(万),EMA20,ATR,类型,实体比,上影比,收盘位,近5突破" in user
+
+
+def test_detail_csv_chronological_and_background_summary():
+    """明细 CSV 时间正序（1=最早，20=最新）；背景摘要含极值/支撑阻力/结构。"""
+    msgs = build_light_screen_messages(_frame(80), bar_limit=80)
+    user = msgs[1]["content"]
+    csv_lines = [l for l in user.splitlines() if l[:2].rstrip(",").isdigit()]
+    assert len(csv_lines) == 20
+    first = csv_lines[0].split(",")
+    last = csv_lines[-1].split(",")
+    assert first[0] == "1" and last[0] == "20"
+    assert float(first[3]) < float(last[3])  # 收盘列：正序且一路上扬 → 1 行 < 20 行
+    assert len(first) == 12 and len(last) == 12
+
+    assert "- 区间极值：最高" in user and "距今" in user
+    assert "关键阻力位" in user and "关键支撑位" in user
+    assert "- 前期结构：" in user and "回升" in user  # 一路上扬 → 探底回升分支
 
 
 # ── run_light_screen ───────────────────────────────────────────────────────────
@@ -148,3 +167,78 @@ def test_run_light_screen_unparseable_fail_open():
     client.stream_chat.return_value = _reply("not json at all")
     r = run_light_screen(client, _frame())
     assert r["pass"] is True and "初筛失败已放行" in r["reason"]
+
+
+# ── run_light_screen_dual（双初筛共识）────────────────────────────────────
+
+
+def _dual_client(reply_a: str, reply_b: str | None = None):
+    """按 system 提示词分流回复的假客户端（主筛/复核官各自独立判定）。"""
+    from pa_agent.ai.light_screen import LIGHT_SCREEN_SYSTEM_PROMPT_B
+
+    client = MagicMock()
+
+    def _chat(msgs, **kwargs):
+        if LIGHT_SCREEN_SYSTEM_PROMPT_B[:30] in msgs[0]["content"]:
+            if reply_b is None:
+                raise RuntimeError("review gateway down")
+            return _reply(reply_b)
+        return _reply(reply_a)
+
+    client.stream_chat.side_effect = _chat
+    return client
+
+
+def test_dual_both_pass_merges_min_conviction_and_sums_usage():
+    from pa_agent.ai.light_screen import run_light_screen_dual
+
+    r = run_light_screen_dual(
+        _dual_client(
+            '{"pass": true, "setup": "回调企稳", "conviction": 72, "reason": "H2"}',
+            '{"pass": true, "setup": "区间上沿", "conviction": 60, "reason": "位置合理"}',
+        ),
+        _frame(),
+    )
+    assert r["pass"] is True
+    assert r["conviction"] == 60  # 取短板
+    assert r["usage_total"]["total_tokens"] == 1120  # 两路相加（560×2）
+    assert r["dual"]["primary"]["conviction"] == 72
+    assert r["dual"]["review"]["conviction"] == 60
+
+
+def test_dual_reviewer_rejects_blocks():
+    from pa_agent.ai.light_screen import run_light_screen_dual
+
+    r = run_light_screen_dual(
+        _dual_client(
+            '{"pass": true, "setup": "突破", "conviction": 70, "reason": "ok"}',
+            '{"pass": false, "setup": "追高", "conviction": 30, "reason": "紧贴阻力"}',
+        ),
+        _frame(),
+    )
+    assert r["pass"] is False
+    assert "复核拒" in r["reason"] and "紧贴阻力" in r["reason"]
+
+
+def test_dual_primary_reject_reason_passes_through():
+    from pa_agent.ai.light_screen import run_light_screen_dual
+
+    r = run_light_screen_dual(
+        _dual_client(
+            '{"pass": false, "setup": "铁丝网", "conviction": 20, "reason": "重叠"}',
+            '{"pass": true, "setup": "", "conviction": 66, "reason": ""}',
+        ),
+        _frame(),
+    )
+    assert r["pass"] is False and r["reason"] == "重叠"  # 主筛理由原样透传
+
+
+def test_dual_fail_open_side_does_not_veto():
+    from pa_agent.ai.light_screen import run_light_screen_dual
+
+    # 复核官网络全挂 → fail-open 放行；主筛通过 → 共识通过（缺席不否决）
+    r = run_light_screen_dual(
+        _dual_client('{"pass": true, "setup": "x", "conviction": 65, "reason": "r"}'),
+        _frame(),
+    )
+    assert r["pass"] is True and "放行" in r["dual"]["review"]["reason"]

@@ -1,0 +1,4 @@
+12:17:31 [INFO] 自选股来源: 通达信自选股(zxg.blk), 共 403 只
+2026-10-14 12:18:18,756 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:18:25,887 WARNING  pa_agent.ai.router: Channel-like state with neutral direction — no directional strategy files loaded
+2026-10-14 12:18:25,887 WARNING  pa_agent.ai.router: Spike with neutral direction — no spike strategy files loaded

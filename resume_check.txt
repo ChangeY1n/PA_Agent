@@ -1,0 +1,9 @@
+resume_ds.log lines: 123
+2026-10-14 13:21:51,712 WARNING  pa_agent.orchestrator.two_stage: Stage 2 network error: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: f3236adc-2242-41
+2026-10-14 13:21:51,719 WARNING  batch_tdx: [98/100] FAIL 601118 : 未返回决策: {'type': 'network_error', 'stage': 'stage2', 'message': "Error code: 402 - {'error': {'message': 'Insuffic
+2026-10-14 13:21:51,791 ERROR    pa_agent: DeepSeekClient stream error after 3844 ms: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 03af699b-c836-451b-
+2026-10-14 13:21:51,791 WARNING  pa_agent.orchestrator.two_stage: Stage 1 network error: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: 03af699b-c836-45
+2026-10-14 13:21:51,798 WARNING  batch_tdx: [99/100] FAIL 603618 : 未返回决策: {'type': 'network_error', 'stage': 'stage1', 'message': "Error code: 402 - {'error': {'message': 'Insuffic
+2026-10-14 13:21:52,370 ERROR    pa_agent: DeepSeekClient stream error after 3949 ms: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: cfc166a9-7c3e-4477-
+2026-10-14 13:21:52,370 WARNING  pa_agent.orchestrator.two_stage: Stage 2 network error: Error code: 402 - {'error': {'message': 'Insufficient Balance (request_id: cfc166a9-7c3e-44
+2026-10-14 13:21:52,379 WARNING  batch_tdx: [100/100] FAIL 600986 : 未返回决策: {'type': 'network_error', 'stage': 'stage2', 'message': "Error code: 402 - {'error': {'message': 'Insuffi

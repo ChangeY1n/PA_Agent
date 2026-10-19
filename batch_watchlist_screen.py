@@ -7,31 +7,40 @@
     python batch_watchlist_screen.py --mode full     # 跳过初筛，全部走完整两阶段
     python batch_watchlist_screen.py --light-only    # 只跑初筛不深析（校准/省钱巡视）
     python batch_watchlist_screen.py --timeframe 1d  # 指定周期（默认沿用设置中的上次周期）
+    python batch_watchlist_screen.py --min-conviction 55  # 初筛信心分门槛（0=关）
 
 说明:
 - 股票列表直接读取通达信自选股（与 GUI 下拉列表同源，含 ↻ 自选 的重读逻辑）。
 - 默认「轻量初筛」：每只先用一次约 0.8 万 token 的紧凑调用粗筛，通过的才跑
   完整两阶段（每只约 16 万 token）；初筛方向为空头的直接淘汰（A股无便利做空，
   历史全部出单均为做多；--allow-short 关闭该过滤）。
+- --min-conviction：初筛虽通过但 conviction（0-100 信心分）低于门槛的也不深析
+  ——2026-10-19 实测 96 只深析中约 40-50 只 conviction < 55 且几乎全为「不下单」。
 - 当前涨停/跌停的股票直接跳过（连初筛也不跑）——停板价无法有效成交，深析
   出的单不可执行；规则按板块涨跌幅（主板10%、创业/科创20%、北交30%）。
 - 每只进入完整分析的股票走与 GUI 完全相同的管线（build_display_frame +
   TwoStageOrchestrator），记录照常写入 records/pending，之后在 GUI 中切到
   该股即可增量分析。
 - 「有交易机会」= 阶段二决策 order_type 不是「不下单」。
+- 核心逻辑在 pa_agent/batch/screen_runner.py（与 GUI 批量窗口共用）。
+
+GUI: 工具菜单 →「批量自选筛选」提供同一功能的窗口版（可编辑初筛提示词、
+实时结果表、线程数选择）。
 """
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import sys
-import threading
 import time
-from decimal import Decimal, ROUND_HALF_UP
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
 from pathlib import Path
+
+from pa_agent.batch.screen_runner import (
+    STATUS_MARKS,
+    analyze_one,
+    write_screen_summary,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,230 +48,6 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("batch_screen")
-
-# 进程级锁：csv_logger 无内建锁，多线程写同一 CSV 需串行化
-_CSV_LOCK = threading.Lock()
-_CTX_LOCAL = threading.local()
-
-NO_ORDER = "不下单"
-
-def local_no_trade_gate(stage1_json: dict) -> bool:
-    """阶段一本地短路：True = 跳过阶段二（省 ~60% token）。
-
-    仅当 router 一个策略文件都不会加载时触发（direction=neutral 且
-    cycle_position ∈ {spike, extreme_tr}）：阶段二无任何策略可依，
-    历史记录 9/9 全部判「不下单」，跳过等价于省掉走过场。
-
-    刻意不扩大到 neutral+区间/宽通道：600333（neutral+broad_channel，
-    2026-10-08）检测到 breakout_test 后阶段二给出过限价单，扩大会误杀
-    真实机会；也不看 detected_patterns —— 形态集合在出单/不出单两组
-    几乎相同，无法区分。
-    """
-    from pa_agent.ai.router import route_strategy_files
-
-    try:
-        return not route_strategy_files(stage1_json)
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def _limit_state(symbol: str, bars: list) -> str:
-    """判断当前价是否触及涨停/跌停；返回 "" / "涨停" / "跌停"。
-
-    - 用最新一根（K1）的 close 对比前一根收盘推算的停板价；盘中 K1 未收盘时
-      close 即最新价，同样成立（「当前」停板）。
-    - 涨跌幅按代码前缀：主板 10%，创业板 30/科创 68 为 20%，北交 43/83/87/92
-      为 30%；停板价按交易所规则四舍五入到分。
-    - 局限：ST（5%）无法从K线识别，会漏判为可分析——影响极小，接受。
-    """
-    if len(bars) < 2:
-        return ""
-    last, prev = bars[0], bars[1]
-    prev_close = getattr(prev, "close", None)
-    if not prev_close:
-        return ""
-    if symbol.startswith(("30", "68")):
-        ratio = Decimal("0.20")
-    elif symbol.startswith(("43", "83", "87", "92")):
-        ratio = Decimal("0.30")
-    else:
-        ratio = Decimal("0.10")
-    q = Decimal("0.01")
-    base = Decimal(str(prev_close))
-    up = (base * (Decimal(1) + ratio)).quantize(q, ROUND_HALF_UP)
-    down = (base * (Decimal(1) - ratio)).quantize(q, ROUND_HALF_UP)
-    c = Decimal(str(last.close)).quantize(q)
-    # 停板价是交易所硬边界：真实停板收盘价只能恰好等于；大幅越过只可能是
-    # 除权除息缺口或脏数据，不算停板。
-    if c == up:
-        return "涨停"
-    if c == down:
-        return "跌停"
-    return ""
-
-
-def thread_ctx():
-    """每个工作线程一个独立 AppContext（客户端/编排器不跨线程共享）。"""
-    ctx = getattr(_CTX_LOCAL, "ctx", None)
-    if ctx is not None:
-        return ctx
-
-    from pa_agent.app_context import AppContext
-
-    ctx = AppContext.bootstrap()
-
-    # csv_logger 并发写保护（excel_logger 内部已有锁）
-    csv_logger = getattr(ctx, "csv_logger", None)
-    if csv_logger is not None:
-        orig = csv_logger.log_decision
-
-        def _locked(rec, _orig=orig):
-            with _CSV_LOCK:
-                _orig(rec)
-
-        csv_logger.log_decision = _locked
-
-    _CTX_LOCAL.ctx = ctx
-    return ctx
-
-
-def analyze_one(
-    symbol: str,
-    timeframe: str,
-    bar_count: int,
-    use_local_gate: bool = True,
-    *,
-    mode: str = "light",
-    light_only: bool = False,
-    light_bars: int = 60,
-    long_only: bool = True,
-) -> dict:
-    """分析单只股票：取 K 线 →（可选）轻量初筛 → 两阶段分析 → 分类决策。"""
-    from pa_agent.ai.light_screen import LIGHT_SCREEN_DEFAULT_BARS, run_light_screen
-    from pa_agent.data.factory import create_data_source
-    from pa_agent.data.snapshot import (
-        INDICATOR_WARMUP_BARS,
-        build_display_frame,
-    )
-    from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
-    from pa_agent.util.threading import CancelToken
-
-    result = {
-        "symbol": symbol,
-        "timeframe": timeframe,
-        "status": "failed",  # opportunity | no_order | screened_out | light_pass | limit_skip | failed
-        "order_type": "",
-        "order_direction": "",
-        "entry_price": None,
-        "stop_loss_price": None,
-        "take_profit_price": None,
-        "trade_confidence": None,
-        "reasoning": "",
-        "error": None,
-        "light": None,  # 初筛判定 {pass, direction, setup, conviction, reason}
-        "tokens_light": 0,
-        "tokens_full": 0,
-    }
-
-    tdx = None
-    t0 = time.monotonic()
-    try:
-        ctx = thread_ctx()
-
-        tdx = create_data_source("tdx")
-        tdx.connect()
-        tdx.subscribe(symbol, timeframe)
-        bars = tdx.latest_snapshot(bar_count + INDICATOR_WARMUP_BARS + 5)
-        if not bars:
-            raise ValueError("未获取到 K 线数据")
-
-        limit = _limit_state(symbol, bars)
-        if limit:
-            result["status"] = "limit_skip"
-            result["reasoning"] = f"（{limit}，跳过分析）"
-            return _finish(result, t0)
-
-        if mode == "light":
-            n_light = max(20, min(light_bars or LIGHT_SCREEN_DEFAULT_BARS, bar_count))
-            light_frame = build_display_frame(bars, n_light, symbol, timeframe)
-            if light_frame is None:
-                raise ValueError("K 线不足以构建初筛帧")
-            light = run_light_screen(ctx.client, light_frame)
-            result["light"] = {
-                k: light.get(k) for k in ("pass", "direction", "setup", "conviction", "reason")
-            }
-            result["tokens_light"] = (light.get("usage_total") or {}).get("total_tokens") or 0
-            if not light.get("pass"):
-                result["status"] = "screened_out"
-                result["reasoning"] = str(light.get("reason") or "")
-                return _finish(result, t0)
-            if long_only and str(light.get("direction") or "") == "bearish":
-                # A股无便利做空；历史全部出单（6/6）均为做多，空头方向不深析。
-                result["status"] = "screened_out"
-                result["reasoning"] = "（只做多模式：初筛方向为空头）"
-                return _finish(result, t0)
-            if light_only:
-                result["status"] = "light_pass"
-                return _finish(result, t0)
-
-        frame = build_display_frame(bars, bar_count, symbol, timeframe)
-        if frame is None:
-            raise ValueError("K 线不足以构建分析帧")
-
-        orchestrator = TwoStageOrchestrator(
-            client=ctx.client,
-            assembler=ctx.assembler,
-            router=ctx.router,
-            validator=ctx.validator,
-            pending_writer=ctx.pending_writer,
-            exp_reader=ctx.exp_reader,
-            settings=ctx.settings,
-            csv_logger=ctx.csv_logger,
-            excel_logger=ctx.excel_logger,
-        )
-        record = orchestrator.submit(
-            frame,
-            CancelToken(),
-            on_event=lambda evt: None,
-            local_gate=local_no_trade_gate if use_local_gate else None,
-        )
-
-        if record.exception is not None:
-            exc = record.exception
-            raise ValueError(
-                f"{exc.get('type', 'error')}: {exc.get('message', '')}"
-                if isinstance(exc, dict)
-                else str(exc)
-            )
-
-        decision = record.stage2_decision or {}
-        inner = decision.get("decision", {}) if isinstance(decision, dict) else {}
-        order = str(inner.get("order_type") or "")
-        result["order_type"] = order
-        result["order_direction"] = str(inner.get("order_direction") or "")
-        result["entry_price"] = inner.get("entry_price")
-        result["stop_loss_price"] = inner.get("stop_loss_price")
-        result["take_profit_price"] = inner.get("take_profit_price")
-        result["trade_confidence"] = inner.get("trade_confidence")
-        result["reasoning"] = str(inner.get("reasoning") or "")
-        result["status"] = "opportunity" if order and order != NO_ORDER else "no_order"
-        result["tokens_full"] = (record.usage_total or {}).get("total_tokens") or 0
-
-    except Exception as exc:  # noqa: BLE001
-        result["error"] = str(exc)
-    finally:
-        if tdx is not None:
-            try:
-                tdx.disconnect()
-            except Exception:  # noqa: BLE001
-                pass
-
-    return _finish(result, t0)
-
-
-def _finish(result: dict, t0: float) -> dict:
-    result["seconds"] = round(time.monotonic() - t0, 1)
-    return result
 
 
 def main() -> int:
@@ -273,10 +58,14 @@ def main() -> int:
     parser.add_argument("--light-only", action="store_true",
                         help="只跑轻量初筛、不跑完整分析（校准/省钱巡视用）")
     parser.add_argument("--light-bars", type=int, default=0,
-                        help="初筛用 K 线根数（默认 60）")
+                        help="初筛用 K 线根数（默认 80：前 60 摘要 + 近 20 明细）")
+    parser.add_argument("--single-screen", action="store_true",
+                        help="关闭双初筛共识，只跑 Brooks 主筛（默认开双筛，token ×2）")
     parser.add_argument("--allow-short", action="store_true",
                         help="初筛为空头方向的也进入深析（默认只做多：A股无便利做空，"
                              "历史全部出单均为做多）")
+    parser.add_argument("--min-conviction", type=int, default=0,
+                        help="初筛 conviction 门槛（0-100，0=关闭；低于门槛不深析省 token）")
     parser.add_argument("--limit", type=int, default=10,
                         help="取自选前 N 只（0 = 全部，默认 10）")
     parser.add_argument("--timeframe", default="",
@@ -344,14 +133,16 @@ def main() -> int:
 
     logger.info(
         "自选共 %d 只，本次分析 %d 只（offset=%d）· 周期 %s · %d 根K线 · %d 并发 · "
-        "模式 %s · 只做多 %s · 本地短路 %s",
+        "模式 %s · 只做多 %s · conviction门槛 %d · 本地短路 %s · 双初筛 %s",
         total_watchlist, len(symbols), args.offset, timeframe,
         bar_count, args.workers, args.mode,
         "关" if args.allow_short else "开",
+        args.min_conviction,
         "关" if args.no_local_gate else "开",
+        "关" if args.single_screen else "开",
     )
 
-    light_bars = args.light_bars if args.light_bars > 0 else 60
+    light_bars = args.light_bars if args.light_bars > 0 else 80
 
     results: list[dict] = []
     t0 = time.monotonic()
@@ -361,7 +152,9 @@ def main() -> int:
                       not args.no_local_gate,
                       mode=args.mode, light_only=args.light_only,
                       light_bars=light_bars,
-                      long_only=not args.allow_short): s
+                      long_only=not args.allow_short,
+                      min_conviction=args.min_conviction,
+                      dual_screen=not args.single_screen): s
             for s in symbols
         }
         for i, fut in enumerate(as_completed(futures), 1):
@@ -373,9 +166,7 @@ def main() -> int:
                      "timeframe": timeframe, "order_type": "", "reasoning": "",
                      "light": None, "tokens_light": 0, "tokens_full": 0}
             results.append(r)
-            mark = {"opportunity": "★机会", "no_order": "—观望",
-                    "screened_out": "·淘汰", "light_pass": "+入围",
-                    "limit_skip": "■停板", "failed": "✗失败"}[r["status"]]
+            mark = STATUS_MARKS[r["status"]]
             light_note = ""
             if r.get("light") and r.get("tokens_light"):
                 light_note = " [初筛%s %s]" % (
@@ -405,31 +196,18 @@ def main() -> int:
     n_full_ran = [r for r in results if (r.get("tokens_full") or 0) > 0]
 
     # ── 保存结果 ────────────────────────────────────────────────────────────
-    out_dir = Path(args.output) / datetime.now().strftime("screen_%Y%m%d_%H%M%S")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "summary.json").write_text(
-        json.dumps(
-            {
-                "batch_time": datetime.now().isoformat(),
-                "timeframe": timeframe,
-                "bar_count": bar_count,
-                "mode": args.mode,
-                "light_only": args.light_only,
-                "total": len(results),
-                "opportunities": len(opportunities),
-                "no_order": len(no_order),
-                "screened_out": len(screened_out),
-                "light_pass": len(light_pass),
-                "limit_skip": len(limit_skips),
-                "failed": len(failed),
-                "tokens_light": tokens_light,
-                "tokens_full": tokens_full,
-                "duration_seconds": round(elapsed, 1),
-                "results": results,
-            },
-            ensure_ascii=False, indent=2,
-        ),
-        encoding="utf-8",
+    out_dir = write_screen_summary(
+        args.output,
+        results,
+        {
+            "timeframe": timeframe,
+            "bar_count": bar_count,
+            "mode": args.mode,
+            "light_only": args.light_only,
+            "dual_screen": not args.single_screen,
+            "min_conviction": args.min_conviction,
+            "duration_seconds": round(elapsed, 1),
+        },
     )
 
     # ── 汇总输出 ────────────────────────────────────────────────────────────
