@@ -235,6 +235,13 @@ def _resolve_thinking_params(
         return extra_body, None
 
     if not _thinking:
+        # 混合推理模型经中转网关（New-API 等）转发时，不传思考参数会按模型默认
+        # "思考"输出——实测阶段二约 2/3 的输出 token 被思考吃掉，拉长解码时间。
+        # DeepSeek v4+ 与 GLM 4.5+ 同用 {"thinking":{"type":"disabled"}} 线格式，
+        # 对这两族模型显式关闭；其余模型保持不传（避免未知参数 400）。
+        _m = model.lower()
+        if "deepseek" in _m or "glm" in _m:
+            return {"thinking": {"type": "disabled"}}, None
         return {}, None
 
     max_out = _completion_max_tokens(
@@ -499,6 +506,7 @@ class DeepSeekClient:
         t0 = time.monotonic()
         reasoning_content = ""
         content = ""
+        chunks_received = 0
         request_id = ""
         model_name = ""
         prompt_tokens = 0
@@ -535,6 +543,7 @@ class DeepSeekClient:
                 # Check cancellation on each chunk
                 if cancel_token is not None and cancel_token.is_set():
                     raise CancelledError("Request cancelled during streaming")
+                chunks_received += 1
 
                 # Extract usage from the final chunk (stream_options)
                 if hasattr(chunk, "usage") and chunk.usage is not None:
@@ -582,7 +591,13 @@ class DeepSeekClient:
             raise
         except Exception as exc:
             latency_ms = (time.monotonic() - t0) * 1000
-            self._log.error("DeepSeekClient stream error after %.0f ms: %s", latency_ms, exc)
+            # 区分「零字节挂起被网关掐断」(chunks=0) 与「流到一半中断」(chunks>0)
+            self._log.error(
+                "DeepSeekClient stream error after %.0f ms: %s "
+                "(chunks_received=%d, reasoning_chars=%d, content_chars=%d)",
+                latency_ms, exc, chunks_received,
+                len(reasoning_content), len(content),
+            )
             raise
 
         latency_ms = (time.monotonic() - t0) * 1000

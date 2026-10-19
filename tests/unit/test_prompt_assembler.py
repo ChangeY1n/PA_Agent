@@ -513,69 +513,15 @@ def test_render_kline_feature_table_limit_uses_full_window_header(
 # ── T13: Prompt assembler tests for next_bar_prediction ──────────────────────
 
 
-def test_stage2_prompt_contains_prediction_instruction(assembler: PromptAssembler):
-    """Stage 2 prompt must contain next_bar_prediction instruction (R4.1)."""
+def test_stage2_prompt_excludes_prediction_instruction(assembler: PromptAssembler):
+    """Stage 2 prompt must not request future-trend predictions (removed to cut tokens)."""
     frame = _make_frame()
     messages = assembler.build_stage2(frame, {}, [], [])
     user = messages[1]["content"]
-    assert "next_bar_prediction" in user
-    assert "probabilities" in user
-    assert "direction" in user
-
-
-def test_previous_prediction_rendered_in_incremental_mode(assembler: PromptAssembler):
-    """With previous_record containing prediction, prompt must show summary (R5.2)."""
-    from pa_agent.records.schema import AnalysisRecord, RecordMeta
-
-    frame = _make_frame()
-    stage1_messages = assembler.build_stage1(frame)
-    stage1_json = {"cycle_position": "normal_channel", "direction": "bullish", "gate_result": "proceed"}
-
-    previous = AnalysisRecord(
-        meta=RecordMeta(
-            timestamp_local_iso="2026-01-01T00:00:00.000",
-            timestamp_local_ms=1,
-            symbol="XAUUSD",
-            timeframe="1h",
-            bar_count=5,
-            ai_provider={},
-        ),
-        kline_data=[],
-        htf_text="",
-        stage1_messages=[],
-        stage1_response=None,
-        stage1_diagnosis={"cycle_position": "normal_channel"},
-        stage2_messages=[],
-        stage2_response=None,
-        stage2_decision={
-            "decision": {"order_type": "不下单"},
-            "next_bar_prediction": {
-                "direction": "bullish",
-                "probabilities": {"bullish": 60, "bearish": 30, "neutral": 10},
-                "reasoning": "test",
-                "unpredictable": False,
-            },
-        },
-        strategy_files_used=[],
-        experience_loaded=[],
-        exception=None,
-        usage_total={},
-    )
-
-    messages = assembler.build_stage2_continuation(
-        frame=frame,
-        stage1_messages=stage1_messages,
-        stage1_reply_content='{"cycle_position":"normal_channel","direction":"bullish"}',
-        stage1_json=stage1_json,
-        strategy_files=["上涨通道分析识别.txt"],
-        experience_entries=[],
-        previous_record=previous,
-    )
-
-    user = messages[3]["content"]  # Stage 2 user prompt is now at index 3
-    assert "上一轮下一根K线预测" in user
-    assert "阳线" in user
-    assert "60%" in user
+    assert "next_bar_prediction" not in user
+    assert "next_cycle_prediction" not in user
+    assert "下一根K线预测" not in user
+    assert "下一个市场周期预测" not in user
 
 
 def test_no_previous_prediction_no_summary(assembler: PromptAssembler):
@@ -584,55 +530,3 @@ def test_no_previous_prediction_no_summary(assembler: PromptAssembler):
     messages = assembler.build_stage2(frame, {}, [], [])
     user = messages[1]["content"]
     assert "上一轮下一根K线预测" not in user
-
-
-def test_unpredictable_previous_prediction_renders_note(assembler: PromptAssembler):
-    """Unpredictable previous prediction must render note (R5.2)."""
-    from pa_agent.records.schema import AnalysisRecord, RecordMeta
-
-    frame = _make_frame()
-    stage1_messages = assembler.build_stage1(frame)
-    stage1_json = {"cycle_position": "normal_channel", "direction": "bullish", "gate_result": "proceed"}
-
-    previous = AnalysisRecord(
-        meta=RecordMeta(
-            timestamp_local_iso="2026-01-01T00:00:00.000",
-            timestamp_local_ms=1,
-            symbol="XAUUSD",
-            timeframe="1h",
-            bar_count=5,
-            ai_provider={},
-        ),
-        kline_data=[],
-        htf_text="",
-        stage1_messages=[],
-        stage1_response=None,
-        stage1_diagnosis={},
-        stage2_messages=[],
-        stage2_response=None,
-        stage2_decision={
-            "next_bar_prediction": {
-                "direction": None,
-                "probabilities": None,
-                "reasoning": "test",
-                "unpredictable": True,
-            },
-        },
-        strategy_files_used=[],
-        experience_loaded=[],
-        exception=None,
-        usage_total={},
-    )
-
-    messages = assembler.build_stage2_continuation(
-        frame=frame,
-        stage1_messages=stage1_messages,
-        stage1_reply_content='{"cycle_position":"normal_channel"}',
-        stage1_json=stage1_json,
-        strategy_files=["上涨通道分析识别.txt"],
-        experience_entries=[],
-        previous_record=previous,
-    )
-
-    user = messages[3]["content"]  # Stage 2 user prompt is now at index 3
-    assert "不可预测" in user

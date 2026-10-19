@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 DecisionStance = Literal["conservative", "balanced", "aggressive", "extreme_aggressive"]
 DataSourceKind = Literal["mt5", "tradingview", "akshare", "tdx"]
@@ -65,6 +65,8 @@ class GeneralSettings(BaseModel):
     tdx_install_dir: str = ""
     last_symbol: str = "XAUUSDm"
     last_timeframe: str = "15m"
+    #: 收藏的品种（品种框旁 ★ 按钮切换；置顶显示在品种下拉列表）
+    favorite_symbols: list[str] = Field(default_factory=list)
     decision_flow_auto_play: bool = True
     decision_flow_play_seconds: int = 50
     incremental_max_new_bars: int = Field(default=10, ge=0, le=500)
@@ -105,15 +107,45 @@ class GeneralSettings(BaseModel):
             return 50
         return v
 
+    @field_validator("favorite_symbols", mode="before")
+    @classmethod
+    def _clean_favorite_symbols(cls, v: object) -> object:
+        """strip、去空、去重保序."""
+        if not isinstance(v, list):
+            return []
+        seen: set[str] = set()
+        out: list[str] = []
+        for item in v:
+            sym = str(item).strip()
+            if sym and sym not in seen:
+                seen.add(sym)
+                out.append(sym)
+        return out
+
 
 class Settings(BaseModel):
     """Root settings object persisted to config/settings.json."""
     model_config = ConfigDict(extra="ignore")
 
+    #: 当前生效的 AI 提供商配置（切换方案 = 把所选方案字段写入此处）
     provider: AIProviderSettings = Field(default_factory=AIProviderSettings)
+    #: 命名的 AI 提供商方案库（名称 → 完整提供商配置）
+    provider_profiles: dict[str, AIProviderSettings] = Field(default_factory=dict)
+    #: 当前使用（也是启动默认）的方案名
+    active_provider_name: str = ""
     general: GeneralSettings = Field(default_factory=GeneralSettings)
     prompt: PromptSettings = Field(default_factory=PromptSettings)
     validation: ValidationSettings = Field(default_factory=ValidationSettings)
+
+    @model_validator(mode="after")
+    def _ensure_provider_profiles(self) -> "Settings":
+        """维护不变式：方案库非空且 active_provider_name 指向存在的方案."""
+        if not self.provider_profiles:
+            self.provider_profiles = {"默认": self.provider.model_copy()}
+            self.active_provider_name = "默认"
+        elif self.active_provider_name not in self.provider_profiles:
+            self.active_provider_name = next(iter(self.provider_profiles))
+        return self
 
 
 def provider_api_key_configured(settings: Settings | None) -> bool:

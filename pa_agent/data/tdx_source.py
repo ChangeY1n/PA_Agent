@@ -5,6 +5,7 @@ Uses eltdx to connect to TongDaXin servers for A-share market data.
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -92,6 +93,12 @@ class TDXSource(DataSource):
         self._timeframe: str = ""
         self._connected: bool = False
         self._tdx_dir: str | None = None
+        # 长连接 TdxClient：每次请求都新建 client 需握手 2 条 TCP（实测
+        # ~750ms）且高频重连会加剧 TDX 服务器限流/超时；这里跨请求复用，
+        # 仅在请求失败时丢弃重建。锁保证 RefreshLoop / SnapshotFetchWorker
+        # 两个线程串行使用同一个 client。
+        self._client: Any = None
+        self._client_lock = threading.Lock()
         # 自选股缓存：(文件路径, mtime, size) → 代码列表，避免每次下拉重复读文件
         self._watchlist_cache_key: tuple[str, float, int] | None = None
         self._watchlist_cache_symbols: list[str] = []
@@ -100,7 +107,7 @@ class TDXSource(DataSource):
         """连接到通达信服务"""
         try:
             # eltdx 使用上下文管理器，验证库是否可用
-            from eltdx import TdxClient
+            from eltdx import TdxClient  # noqa: F401
             logger.info("TDX (eltdx) 已准备就绪")
             self._connected = True
         except ImportError as exc:
@@ -109,9 +116,43 @@ class TDXSource(DataSource):
                 "eltdx 未安装，请执行: pip install git+https://github.com/Neoooo0909/tdx-mcp.git"
             ) from exc
 
+    def _get_client(self) -> Any:
+        """返回已连接的长生命周期 TdxClient（懒创建）."""
+        from eltdx import TdxClient
+
+        if self._client is None:
+            self._client = TdxClient()
+        if not getattr(self._client, "_connected", False):
+            try:
+                self._client.connect()
+            except Exception:
+                # 连接失败（服务器不可达等）——丢弃半连接对象，下次重建
+                self._drop_client()
+                raise
+        return self._client
+
+    def _drop_client(self) -> None:
+        """丢弃当前 TdxClient，下次请求时重建.
+
+        close() 会等待连接池收尾，可能阻塞数秒——放到后台守护线程执行，
+        避免卡住调用方（GUI 线程的 disconnect 也会走到这里）。
+        """
+        client, self._client = self._client, None
+        if client is None:
+            return
+
+        def _close() -> None:
+            try:
+                client.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+        threading.Thread(target=_close, daemon=True, name="tdx-client-close").start()
+
     def disconnect(self) -> None:
         """断开连接"""
         self._connected = False
+        self._drop_client()
         logger.info("TDX 数据源已断开")
 
     def set_tdx_dir(self, tdx_dir: str | None) -> None:
@@ -196,9 +237,9 @@ class TDXSource(DataSource):
             raise DataSourceTransientError(f"TDX 获取失败: {exc}") from exc
 
     def _fetch_bars(self, symbol: str, timeframe: str, count: int) -> list[dict[str, Any]]:
-        """从通达信获取 K 线数据"""
+        """从通达信获取 K 线数据（复用长连接 client，失败时丢弃重建）"""
         try:
-            from eltdx import TdxClient, KlinePeriod
+            from eltdx import KlinePeriod
 
             # 转换代码格式
             code = _normalize_code_to_eltdx(symbol)
@@ -207,15 +248,19 @@ class TDXSource(DataSource):
             period_str = _TDX_PERIOD_MAP.get(timeframe, "DAY")
             period = getattr(KlinePeriod, period_str)
 
-            # 使用上下文管理器创建客户端
-            with TdxClient() as client:
-                # 获取 K 线数据
-                result = client.get_kline(code, period, count=count)
+            with self._client_lock:
+                client = self._get_client()
+                try:
+                    result = client.get_kline(code, period, count=count)
+                except Exception:
+                    # 连接可能已损坏（超时/半开）——丢弃，下次请求重建
+                    self._drop_client()
+                    raise
 
-                if not result or not result.items:
-                    raise DataSourceTransientError(f"未获取到数据: {symbol}")
+            if not result or not result.items:
+                raise DataSourceTransientError(f"未获取到数据: {symbol}")
 
-                return self._parse_eltdx_bars(result.items)
+            return self._parse_eltdx_bars(result.items)
 
         except ImportError as exc:
             raise DataSourceTransientError("eltdx 未安装") from exc

@@ -248,9 +248,9 @@ def test_demo_mode_replays_legacy_record(
     # Ensure no prediction key
     legacy_s2.pop("next_bar_prediction", None)
 
-    # Must not raise
+    # Must not raise; prediction widgets were removed from the GUI entirely
     panel.set_decision(legacy_s2)
-    assert not panel._prediction_group.isVisible()
+    assert not hasattr(panel, "_prediction_group")
 
 
 def test_cancel_no_prediction_required(

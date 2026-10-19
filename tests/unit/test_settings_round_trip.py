@@ -66,3 +66,89 @@ def test_missing_api_key_leaves_api_key_blank(tmp_path):
     p.write_text(json.dumps(data), encoding="utf-8")
     s = load_settings(p)
     assert s.provider.api_key == ""
+
+
+def test_favorite_symbols_round_trip(tmp_path):
+    """favorite_symbols persists through save/load, order preserved."""
+    p = tmp_path / "settings.json"
+    s = Settings()
+    s.general.favorite_symbols = ["600519", "000001", "300750"]
+    save_settings(s, p)
+    loaded = load_settings(p)
+    assert loaded.general.favorite_symbols == ["600519", "000001", "300750"]
+
+
+def test_favorite_symbols_cleaned_on_load(tmp_path):
+    """Loader strips whitespace, drops empties, dedupes keeping order."""
+    p = tmp_path / "settings.json"
+    p.write_text(
+        json.dumps({"general": {"favorite_symbols": [" 600519 ", "", "600519", "XAUUSDm"]}}),
+        encoding="utf-8",
+    )
+    s = load_settings(p)
+    assert s.general.favorite_symbols == ["600519", "XAUUSDm"]
+
+
+def test_provider_profiles_round_trip(tmp_path):
+    """Multiple named provider profiles persist with the active name."""
+    from pa_agent.config.settings import AIProviderSettings
+
+    p = tmp_path / "settings.json"
+    s = Settings()
+    s.provider_profiles = {
+        "DeepSeek": AIProviderSettings(
+            model="deepseek-v4-pro",
+            base_url="https://api.deepseek.com",
+            api_key="sk-a",
+        ),
+        "Packy": AIProviderSettings(
+            model="claude-sonnet-4-6",
+            base_url="https://www.packyapi.com/v1",
+            api_key="sk-b",
+        ),
+    }
+    s.active_provider_name = "Packy"
+    save_settings(s, p)
+    loaded = load_settings(p)
+    assert set(loaded.provider_profiles) == {"DeepSeek", "Packy"}
+    assert loaded.provider_profiles["DeepSeek"].api_key == "sk-a"
+    assert loaded.provider_profiles["Packy"].model == "claude-sonnet-4-6"
+    assert loaded.active_provider_name == "Packy"
+
+
+def test_provider_profiles_seeded_from_legacy_provider(tmp_path):
+    """Legacy settings.json without profiles → seed「默认」from current provider."""
+    p = tmp_path / "settings.json"
+    s = Settings()
+    s.provider.api_key = "sk-legacy"
+    save_settings(s, p)
+    # Strip profile fields to simulate a pre-profiles config file
+    data = json.loads(p.read_text(encoding="utf-8"))
+    data.pop("provider_profiles", None)
+    data.pop("active_provider_name", None)
+    p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    loaded = load_settings(p)
+    assert list(loaded.provider_profiles) == ["默认"]
+    assert loaded.provider_profiles["默认"].api_key == "sk-legacy"
+    assert loaded.active_provider_name == "默认"
+
+
+def test_dangling_active_provider_falls_back_to_first(tmp_path):
+    """active_provider_name pointing at a removed profile falls back to first."""
+    p = tmp_path / "settings.json"
+    p.write_text(
+        json.dumps(
+            {
+                "provider": {"api_key": "sk-x"},
+                "provider_profiles": {
+                    "A": {"api_key": "sk-a"},
+                    "B": {"api_key": "sk-b"},
+                },
+                "active_provider_name": "gone",
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = load_settings(p)
+    assert loaded.active_provider_name == "A"

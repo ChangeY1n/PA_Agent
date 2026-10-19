@@ -517,6 +517,13 @@ class AIStreamPanel(QWidget):
             self.finalize_stage("stage2")
         elif text == "已取消" and self._stage:
             self.finalize_stage(self._stage)
+        elif text == "阶段一网络中断，自动重试中…":
+            # 第一次尝试的半截 token 已上屏；清屏后从头重流，避免拼接重复。
+            self.clear_stream_output()
+            self._begin_stage("stage1", self._stage_title("stage1"))
+        elif text == "阶段二网络中断，自动重试中…":
+            self.clear_stream_output()
+            self._begin_stage("stage2", self._stage_title("stage2"))
 
     def on_reasoning_token(self, stage: str, chunk: str) -> None:
         self._append_stream_text_for_stage(stage, chunk, kind="reasoning")

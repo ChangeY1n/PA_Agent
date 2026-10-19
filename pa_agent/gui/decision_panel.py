@@ -31,9 +31,6 @@ _REASON_EDIT_CSS = (
     "font-family: 'Microsoft YaHei UI', 'Segoe UI', sans-serif;"
 )
 
-_PREDICTION_UNPREDICTABLE_COLOR = "#8b949e"
-_PREDICTION_UNPREDICTABLE_LABEL = "不可预测"
-
 # Brooks cycle_position → 中文（市场周期 / 频谱位置）
 _CYCLE_POSITION_ZH: dict[str, str] = {
     "spike": "尖峰 (Spike)",
@@ -120,29 +117,6 @@ def _parse_score_100(value: object) -> int | None:
         return max(0, min(100, int(float(str(value).strip()))))
     except (ValueError, TypeError):
         return None
-
-
-def _format_prediction_probs_line(probs: dict) -> str:
-    bull = probs.get("bullish", "?")
-    bear = probs.get("bearish", "?")
-    neut = probs.get("neutral", "?")
-    return f"阳线的概率为{bull}%  ·  阴线的概率为{bear}%  ·  中性的概率为{neut}%"
-
-
-def _dominant_prediction_direction(probs: dict) -> str | None:
-    """Return bullish/bearish/neutral for styling by highest probability."""
-    parsed: list[tuple[str, float]] = []
-    for key in ("bullish", "bearish", "neutral"):
-        raw = probs.get(key)
-        if raw is None or raw == "":
-            continue
-        try:
-            parsed.append((key, float(raw)))
-        except (TypeError, ValueError):
-            continue
-    if not parsed:
-        return None
-    return max(parsed, key=lambda item: item[1])[0]
 
 
 class DecisionPanel(QWidget):

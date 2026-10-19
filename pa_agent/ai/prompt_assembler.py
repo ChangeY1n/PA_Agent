@@ -86,8 +86,8 @@ _STAGE1_TAIL_REMINDER = (
 
 _STAGE2_TAIL_REMINDER = (
     "【最后一步·必做】思考结束后，立即在 assistant 正文 `content` 输出完整阶段二裸 JSON"
-    "（含 decision、diagnosis_summary、bar_analysis、decision_trace、terminal、"
-    "next_bar_prediction、next_cycle_prediction）。思考用简体中文并尽量简洁；`content` 不得为空。"
+    "（含 decision、diagnosis_summary、bar_analysis、decision_trace、terminal）。"
+    "思考用简体中文并尽量简洁；`content` 不得为空。"
     "若 token 紧张，优先保证 `content` 有 JSON，可缩短思考。\n"
     "⚠️ 禁止在 content 中只写思考过程或分隔符（如 ---输出JSON---）而不附 JSON——"
     "这会导致校验直接失败。哪怕只输出最小骨架 {\"decision\":{\"order_type\":\"不下单\",...}} 也比没有强。\n"
@@ -96,7 +96,6 @@ _STAGE2_TAIL_REMINDER = (
     "  2) decision（含 order_type / entry_price / 止损止盈）\n"
     "  3) diagnosis_summary / bar_analysis（短摘要即可）\n"
     "  4) decision_trace（数组，按章节顺序写；每条 reason 控制在 80 字内）\n"
-    "  5) next_bar_prediction / next_cycle_prediction（每段 reasoning 不超过 200 字）\n"
     "【reason 长度硬约束】decision_trace 每条 reason ≤ 80 字；key_factors/watch_points 各 3-5 条短词组；"
     "diagnosis_confidence_reasoning ≤ 60 字；reasoning 字段均以「结论+一句依据」格式书写。\n"
     "【terminal 硬规则·极常见错误】决策路径里出现 §9.0=否/等待 或 §10.1=否（根本无入场方案）时，"
@@ -509,82 +508,9 @@ def _stage1_output_reminder_for_mode(analysis_mode: str = "original") -> str:
     return _STAGE1_OUTPUT_REMINDER + "\n\n" + _STAGE1_ORIGINAL_MODE_GATE_RULE
 
 
-_NEXT_BAR_PREDICTION_INSTRUCTION = """\
-## 下一根K线预测任务（阶段二附加输出，不影响下单决策）
-
-完成 decision / decision_trace / terminal 后，必须在阶段二 JSON 顶层追加键 `next_bar_prediction`，
-表达对下一根（尚未开始或正在形成）K线收盘后的方向预测：
-
-```json
-"next_bar_prediction": {
-  "direction": "bullish|bearish|neutral",
-  "probabilities": {"bullish": 45, "bearish": 35, "neutral": 20},
-  "reasoning": "简体中文理由，30–1500 字。须明确引用阶段一诊断、最近 K 线几何特征、以及（若提供）上一轮预测摘要。",
-  "unpredictable": false,
-  "features_used": ["stage1_diagnosis", "kline_features"]
-}
-```
-
-硬约束（违反则整体阶段二 JSON 校验失败）：
-
-1. probabilities 三个值均为 0–100 整数，三者之和必须落在 [99, 101]（容差 ±1，源于取整）。
-2. direction 必须等于 probabilities 中数值最大的键；并列最大时取 JSON 出现顺序中靠前的键
-   （即按 bullish → bearish → neutral 的字面顺序）。
-3. reasoning 长度 30–1500 字，简体中文，不写下单价格、不写止损止盈，仅讨论方向与概率依据。
-4. features_used 合法取值封闭列表（只能从下方选对应值，禁止自造字符串）：
-   "stage1_diagnosis"、"kline_features"、"analysis_history"、"experience_library"、"stage2_decision"、"previous_prediction_summary"。
-   至少包含 "stage1_diagnosis"；若提示词中提供了对应来源，应同步包含
-   "kline_features" / "analysis_history" / "experience_library" / "previous_prediction_summary"。
-5. 数据不足（K 线数 < 8）、或阶段一诊断为 extreme_tr / unknown、或市场极端混乱时：
-   设 unpredictable=true，direction=null，probabilities=null，reasoning 写明原因。
-6. 此预测**不**进入交易者方程、**不**改变 decision 中任意字段，仅作辅助参考。
-""".strip()
-
-_NEXT_CYCLE_PREDICTION_INSTRUCTION = """\
-## 下一个市场周期预测任务（阶段二附加输出，不影响下单决策）
-
-完成 next_bar_prediction 后，必须在阶段二 JSON 顶层追加键 `next_cycle_prediction`，
-表达对当前市场周期结束后、下一个市场周期的预测：
-
-```json
-"next_cycle_prediction": {
-  "cycle": "broad_channel",
-  "direction": "bullish",
-  "probabilities": {
-    "spike": 3,
-    "micro_channel": 5,
-    "tight_channel": 8,
-    "normal_channel": 20,
-    "broad_channel": 35,
-    "trending_tr": 15,
-    "trading_range": 10,
-    "extreme_tr": 4
-  },
-  "reasoning": "简体中文理由，1–1500 字。须引用阶段一周期诊断、K 线结构演变特征，说明各周期概率依据。",
-  "unpredictable": false,
-  "features_used": ["stage1_diagnosis", "kline_features"]
-}
-```
-
-市场周期枚举（cycle 字段的合法取值，共 8 个，不含 unknown）：
-spike | micro_channel | tight_channel | normal_channel | broad_channel | trending_tr | trading_range | extreme_tr
-
-硬约束（违反则整体阶段二 JSON 校验失败）：
-
-1. probabilities 八个值均为 0–100 整数，八者之和必须落在 [99, 101]（容差 ±1，源于取整）。
-2. cycle 必须等于 probabilities 中数值最大的键；并列最大时按上方枚举的字面顺序取靠前者
-   （即 spike → micro_channel → tight_channel → normal_channel → broad_channel → trending_tr → trading_range → extreme_tr）。
-3. direction 为独立的方向预测（bullish / bearish / neutral），不由 cycle argmax 强制推导；
-   表达的是预测下一个周期时市场整体偏向的方向。
-4. reasoning 长度 1–1500 字，简体中文，仅讨论周期演变依据，不写下单价格、不写止损止盈。
-5. features_used 合法取值封闭列表（只能从下方选对应值，禁止自造字符串）：
-   "stage1_diagnosis"、"kline_features"、"analysis_history"、"experience_library"、"stage2_decision"、"previous_prediction_summary"。
-   至少包含 "stage1_diagnosis"；若提示词中提供了对应来源，应同步包含
-   "kline_features" / "analysis_history" / "experience_library" / "previous_prediction_summary"。
-6. 数据不足（K 线数 < 8）、或阶段一诊断为 extreme_tr / unknown、或市场极端混乱时：
-   设 unpredictable=true，cycle=null，direction=null，probabilities=null，reasoning 写明原因。
-7. 此预测**不**进入交易者方程、**不**改变 decision 中任意字段，仅作辅助参考。
-""".strip()
+# NOTE: 未来走势预期（next_bar_prediction / next_cycle_prediction）已从提示词中整体移除：
+# 不再要求模型输出预测字段（省 prompt/completion token）。校验层仍接受这两个可选字段，
+# 历史记录回放与旧数据展示不受影响。
 
 # txt files merged into each stage prompt (order preserved)
 COMMON_SYSTEM_STAGE1_TXT_FILES: tuple[str, ...] = (
@@ -1232,40 +1158,6 @@ class PromptAssembler:
             {"role": "user", "content": user_content},
         ]
 
-    @staticmethod
-    def _render_previous_prediction(previous_record: Any) -> str:
-        """Render previous-bar prediction summary for incremental context (R5.2)."""
-        if previous_record is None:
-            return ""
-        # previous_record may be AnalysisRecord or dict-like
-        s2 = getattr(previous_record, "stage2_decision", None)
-        if s2 is None and isinstance(previous_record, dict):
-            s2 = previous_record.get("stage2_decision")
-        if not isinstance(s2, dict):
-            return ""
-        pred = s2.get("next_bar_prediction")
-        if not isinstance(pred, dict):
-            return ""
-
-        unpredictable = bool(pred.get("unpredictable", False))
-        if unpredictable:
-            return (
-                "## 上一轮下一根K线预测\n\n"
-                "上一轮标记为不可预测；本轮请独立判断。\n"
-            )
-
-        direction = pred.get("direction") or "—"
-        probs = pred.get("probabilities") or {}
-        bull = probs.get("bullish", "?")
-        bear = probs.get("bearish", "?")
-        neut = probs.get("neutral", "?")
-        dir_zh = {"bullish": "阳线", "bearish": "阴线", "neutral": "中性"}.get(direction, direction)
-        return (
-            "## 上一轮下一根K线预测\n\n"
-            f"方向：{dir_zh}（阳 {bull}% / 阴 {bear}% / 中性 {neut}%）。"
-            "本轮请基于最新数据独立重新预测，不必延续上轮结论。\n"
-        )
-
     def build_stage2_continuation(
         self,
         *,
@@ -1276,7 +1168,6 @@ class PromptAssembler:
         strategy_files: list[str],
         experience_entries: list[Any],
         decision_stance: str = "conservative",
-        previous_record: Any | None = None,
     ) -> list[dict]:
         """Build Stage 2 as a true continuation of the Stage 1 conversation.
 
@@ -1326,7 +1217,6 @@ class PromptAssembler:
             experience_entries=experience_entries,
             include_kline_table=False,
             decision_stance=decision_stance,
-            previous_record=previous_record,
         )
 
         return [
@@ -1345,7 +1235,6 @@ class PromptAssembler:
         experience_entries: list[Any],
         include_kline_table: bool,
         decision_stance: str = "conservative",
-        previous_record: Any | None = None,
     ) -> str:
         """Build the Stage 2 task turn for standalone or continuation mode."""
         stance_block = build_decision_stance_guidance(normalize_stance(decision_stance))
@@ -1384,8 +1273,6 @@ class PromptAssembler:
                 )
             )
         stage2_parts.append(_STAGE2_OUTPUT_CONTRACT)
-        stage2_parts.append(_NEXT_BAR_PREDICTION_INSTRUCTION)
-        stage2_parts.append(_NEXT_CYCLE_PREDICTION_INSTRUCTION)
         stage2_context = "\n\n---\n\n".join(p for p in stage2_parts if p)
 
         kline_table = self._render_kline_table(frame)
@@ -1413,7 +1300,6 @@ class PromptAssembler:
         )
         if breakout_tick_hint and include_kline_table:
             kline_block += f"{breakout_tick_hint}\n\n"
-        prev_pred_block = self._render_previous_prediction(previous_record)
         return (
             "## 阶段切换 — 现在是阶段二\n\n"
             "**阶段一已经完成并通过程序校验。** 上一条 assistant 消息就是阶段一的诊断 JSON"
@@ -1430,8 +1316,7 @@ class PromptAssembler:
             "- `bar_analysis`（阶段二版；**bar_type 必须与阶段一完全一致，不得重新推断**）\n"
             "- `decision_trace`（每条 reason ≤ 80 字；bar_range 按节点实际使用的 K 线填写，"
             "**禁止所有节点都填 `K1` 或同一字符串**）\n"
-            "- `terminal`（outcome 与 decision.order_type 一致）\n"
-            "- `next_bar_prediction` / `next_cycle_prediction`（附加预测，不影响下单）\n\n"
+            "- `terminal`（outcome 与 decision.order_type 一致）\n\n"
             "---\n\n"
             "## 阶段二任务\n\n"
             "你现在独立执行阶段二：交易决策、风险收益和下单方式评估（基于阶段一诊断结果）。\n"
@@ -1442,7 +1327,6 @@ class PromptAssembler:
             f"{json.dumps(self._compact_stage1_for_stage2(stage1_json), ensure_ascii=False, indent=2)}"
             f"\n```\n\n"
             f"{kline_block}"
-            f"{prev_pred_block + chr(10) if prev_pred_block else ''}"
             f"请根据以上诊断和K线数据,按《二元决策.txt》§3–§15 输出 JSON 决策结果"
             f"(含 decision_trace 与 terminal)。\n"
             f"注意:如果判断不下单,entry_price、take_profit_price、stop_loss_price、order_direction 必须全部为 null。\n\n"
@@ -1475,10 +1359,12 @@ class PromptAssembler:
             "strategy_files_needed",
             "risk_warning",
             "bar_analysis",
-            "bar_by_bar_summary",
             "gate_trace",
             "gate_result",
         )
+        # bar_by_bar_summary is deliberately excluded: the full Stage 1 JSON
+        # (assistant turn of the continuation) already carries it — embedding it
+        # again here duplicated the longest field in every Stage 2 request.
         return {k: stage1_json[k] for k in keys if k in stage1_json}
 
     @staticmethod

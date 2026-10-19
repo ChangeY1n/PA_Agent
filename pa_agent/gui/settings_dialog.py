@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -23,8 +24,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
 
-from pa_agent.config.settings import Settings, save_settings
-from pa_agent.config.paths import SETTINGS_JSON_PATH
+from pa_agent.config.settings import AIProviderSettings, Settings, save_settings
 
 _API_KEY_HELP_URL = "https://my.feishu.cn/wiki/CUV1wUKWxiQGhekQdRvcZQQ2ncf"
 _AGENT_TUTORIAL_URL = (
@@ -40,6 +40,11 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("设置")
         self.setMinimumWidth(520)
         self._settings = settings
+        # 方案库工作副本：新增/删除/切换只动副本，取消对话框不污染运行中设置
+        self._profiles: dict[str, AIProviderSettings] = {
+            name: profile.model_copy()
+            for name, profile in settings.provider_profiles.items()
+        }
         self._setup_ui()
         self._load_values()
 
@@ -56,6 +61,29 @@ class SettingsDialog(QDialog):
 
         provider_group = QGroupBox("AI 提供商")
         provider_form = QFormLayout(provider_group)
+
+        # ── 多 API 配置方案：保存多套提供商配置，选择当前使用哪一套 ──────────
+        profile_row = QHBoxLayout()
+        self._profile_combo = QComboBox()
+        self._profile_combo.setToolTip(
+            "选择要使用的 API 配置方案；选中后其配置载入下方表单，点击「保存」生效并持久化（重启后默认使用所选方案）"
+        )
+        self._profile_combo.currentIndexChanged.connect(self._on_profile_selected)
+        profile_row.addWidget(self._profile_combo, 1)
+        self._profile_save_as_btn = QPushButton("另存为新方案")
+        self._profile_save_as_btn.setToolTip(
+            "把当前表单中的配置保存为一个新命名方案（不切换已有方案的内容）"
+        )
+        self._profile_save_as_btn.clicked.connect(self._on_profile_save_as)
+        profile_row.addWidget(self._profile_save_as_btn)
+        self._profile_delete_btn = QPushButton("删除")
+        self._profile_delete_btn.setToolTip("删除所选方案（至少保留一个）")
+        self._profile_delete_btn.clicked.connect(self._on_profile_delete)
+        profile_row.addWidget(self._profile_delete_btn)
+        provider_form.addRow("配置方案:", profile_row)
+        self._repopulate_profile_combo(
+            str(getattr(self._settings, "active_provider_name", "") or "")
+        )
 
         self._model_edit = QLineEdit()
         provider_form.addRow("模型 (model):", self._model_edit)
@@ -331,6 +359,92 @@ class SettingsDialog(QDialog):
             str(getattr(g, "decision_excel_path", "records/trading_decisions.xlsx"))
         )
 
+    # ── API 配置方案（Provider Profiles）─────────────────────────────────────
+
+    def _repopulate_profile_combo(self, select_name: str) -> None:
+        """重建方案下拉列表并选中 select_name（无信号副作用）."""
+        self._profile_combo.blockSignals(True)
+        self._profile_combo.clear()
+        for name in self._profiles:
+            self._profile_combo.addItem(name, name)
+        idx = self._profile_combo.findData(select_name)
+        if idx < 0:
+            idx = 0
+        if idx >= 0:
+            self._profile_combo.setCurrentIndex(idx)
+        self._profile_combo.blockSignals(False)
+        self._profile_delete_btn.setEnabled(len(self._profiles) > 1)
+
+    def _selected_profile_name(self) -> str:
+        return str(self._profile_combo.currentData() or "")
+
+    def _load_profile_into_form(self, profile: AIProviderSettings) -> None:
+        self._model_edit.setText(profile.model)
+        self._base_url_edit.setText(profile.base_url)
+        self._api_key_edit.setText(profile.api_key)
+        self._thinking_check.setChecked(bool(profile.thinking))
+        idx = self._reasoning_effort_combo.findText(profile.reasoning_effort)
+        if idx >= 0:
+            self._reasoning_effort_combo.setCurrentIndex(idx)
+        self._context_window_spin.setValue(int(profile.context_window))
+
+    def _on_profile_selected(self, _index: int) -> None:
+        """下拉切换方案：把该方案配置载入表单（点击「保存」后生效）."""
+        profile = self._profiles.get(self._selected_profile_name())
+        if profile is not None:
+            self._load_profile_into_form(profile)
+
+    def _form_provider_snapshot(self) -> AIProviderSettings:
+        """按当前表单字段生成提供商配置（保留表单未暴露字段，如 max_completion_tokens）."""
+        base = (
+            self._profiles.get(self._selected_profile_name())
+            or self._settings.provider
+        )
+        return base.model_copy(
+            update={
+                "model": self._model_edit.text().strip(),
+                "base_url": self._base_url_edit.text().strip(),
+                "api_key": self._api_key_edit.text(),
+                "thinking": self._thinking_check.isChecked(),
+                "reasoning_effort": self._reasoning_effort_combo.currentText(),
+                "context_window": self._context_window_spin.value(),
+            }
+        )
+
+    def _on_profile_save_as(self) -> None:
+        name, ok = QInputDialog.getText(self, "另存为新方案", "方案名称:")
+        name = name.strip()
+        if not ok or not name:
+            return
+        if name in self._profiles:
+            answer = QMessageBox.question(
+                self,
+                "方案已存在",
+                f"方案「{name}」已存在，是否覆盖？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self._profiles[name] = self._form_provider_snapshot()
+        self._repopulate_profile_combo(name)
+
+    def _on_profile_delete(self) -> None:
+        name = self._selected_profile_name()
+        if not name or len(self._profiles) <= 1:
+            return
+        answer = QMessageBox.question(
+            self,
+            "删除方案",
+            f"确定删除方案「{name}」？（点击「保存」后生效）",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        del self._profiles[name]
+        self._repopulate_profile_combo(next(iter(self._profiles), ""))
+        # 分隔线后表单切到删除后选中的方案，避免表单仍显示已删内容
+        self._on_profile_selected(self._profile_combo.currentIndex())
+
     @staticmethod
     def _validate_provider_fields(model: str, base_url: str) -> str | None:
         """Return user-facing error text, or None if fields look consistent."""
@@ -369,6 +483,15 @@ class SettingsDialog(QDialog):
         p.thinking = self._thinking_check.isChecked()
         p.reasoning_effort = self._reasoning_effort_combo.currentText()  # type: ignore[assignment]
         p.context_window = self._context_window_spin.value()
+
+        # ── 配置方案：所选方案与表单同步，并标记为当前使用（启动默认） ──────────
+        profile_name = self._selected_profile_name()
+        if profile_name:
+            self._profiles[profile_name] = self._form_provider_snapshot()
+            self._settings.provider_profiles = {
+                name: profile.model_copy() for name, profile in self._profiles.items()
+            }
+            self._settings.active_provider_name = profile_name
 
         g.analysis_bar_count = self._analysis_bar_count_spin.value()
         g.refresh_interval_ms = self._refresh_interval_spin.value()
@@ -420,7 +543,9 @@ class SettingsDialog(QDialog):
                 tdx_source.set_tdx_dir(g.tdx_install_dir or None)
                 parent._populate_symbol_combo_for_source()
 
-        save_settings(self._settings, SETTINGS_JSON_PATH)
+        # 默认路径（pa_agent.config.paths.SETTINGS_JSON_PATH）在函数内解析，
+        # 测试可通过 patch 该常量隔离真实配置文件。
+        save_settings(self._settings)
         self.accept()
 
     def focus_api_key_field(self) -> None:

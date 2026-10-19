@@ -15,7 +15,10 @@ from pa_agent.util.threading import CancelToken, OrchestratorEvent
 
 
 def test_httpx_read_error_stage1(frame, pending_writer, assembler, exp_reader):
-    """httpx.ReadError (e.g. WinError 10054 mid-stream) → Stage1Failed + partial save."""
+    """httpx.ReadError (e.g. WinError 10054 mid-stream) → retried, then Stage1Failed + partial save.
+
+    Backoff is zeroed by the autouse _fast_network_retry fixture in conftest.
+    """
     try:
         import httpx
     except ImportError:
@@ -46,10 +49,14 @@ def test_httpx_read_error_stage1(frame, pending_writer, assembler, exp_reader):
     assert OrchestratorEvent.Stage1Failed in events
     pending_writer.save_partial.assert_called_once()
     assert pending_writer.save_partial.call_args[0][1] == "network_error"
+    # First attempt + NETWORK_RETRY_MAX_ATTEMPTS-1 retries, all failing.
+    from pa_agent.orchestrator import two_stage as _ts
+
+    assert client.stream_chat.call_count == _ts.NETWORK_RETRY_MAX_ATTEMPTS
 
 
 def test_network_timeout_stage1(frame, pending_writer, assembler, exp_reader):
-    """APITimeoutError on stage1 → Stage1Failed emitted."""
+    """APITimeoutError on stage1 → retried, then Stage1Failed emitted."""
     client = MagicMock()
     # openai.APITimeoutError requires a `request` parameter
     client.stream_chat.side_effect = openai.APITimeoutError(request=MagicMock())
@@ -84,3 +91,7 @@ def test_network_timeout_stage1(frame, pending_writer, assembler, exp_reader):
     call_args = pending_writer.save_partial.call_args
     reason = call_args[0][1] if len(call_args[0]) > 1 else call_args[1].get("reason", "")
     assert reason == "network_error"
+    # First attempt + NETWORK_RETRY_MAX_ATTEMPTS-1 retries, all failing.
+    from pa_agent.orchestrator import two_stage as _ts
+
+    assert client.stream_chat.call_count == _ts.NETWORK_RETRY_MAX_ATTEMPTS

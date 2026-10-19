@@ -1,52 +1,176 @@
-"""批量分析通达信自选股 - 多线程版本."""
+"""批量分析通达信自选股 — 多线程 + 多 Provider 版.
+
+用法示例:
+  # 前 150 只用 Gemini (provider profile "gmini")
+  python batch_ai_analyze_tdx.py --profile gmini --limit 150
+
+  # 其余全部用 DeepSeek 官方 (provider profile "ds")
+  python batch_ai_analyze_tdx.py --profile ds --skip 150
+
+  # 一条命令按顺序跑完两批
+  python batch_ai_analyze_tdx.py --dual gmini:150 ds:rest
+
+分析流程与 GUI 完全一致: TDX K线 → build_analysis_frame → TwoStageOrchestrator
+(Stage1 诊断 + Stage2 决策), 并记录 CSV/Excel 决策日志与 pending 记录。
+"""
+from __future__ import annotations
+
+import argparse
 import json
 import logging
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from queue import Queue
 
-# 设置日志
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s',
-    datefmt='%H:%M:%S'
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
 )
+logger = logging.getLogger("batch_tdx")
 
-logger = logging.getLogger(__name__)
+PROJECT_ROOT = Path(__file__).parent
+
+# 每只股票送入分析的 K 线根数(与 GUI 默认 analysis_bar_count 一致)
+ANALYSIS_BARS = 100
+# 额外多取的缓冲根数(含形成中K线 + 指标预热余量由 build_analysis_frame 内部处理)
+FETCH_BARS = 170
+# 单只股票失败后的重试次数(瞬态网络/限流错误)
+RETRIES_PER_STOCK = 1
+RETRY_WAIT_S = 3.0
 
 
-def load_stock_list(file_path: str = "my_stocks.txt") -> list[str]:
-    """加载自选股列表."""
-    path = Path(file_path)
+# ── 自选股列表 ────────────────────────────────────────────────────────────────
 
-    if not path.exists():
-        logger.error("自选股文件不存在: %s", path)
-        return []
+def load_watchlist(fallback_file: str = "my_stocks.txt") -> tuple[list[str], str]:
+    """优先实时读取通达信自选股(zxg.blk), 失败则回退到文本文件."""
+    try:
+        from pa_agent.config.settings import load_settings
+        from pa_agent.config.paths import SETTINGS_JSON_PATH
+        from pa_agent.data.tdx_source import TDXSource
 
+        settings = load_settings(SETTINGS_JSON_PATH)
+        src = TDXSource()
+        src.set_tdx_dir(getattr(settings.general, "tdx_install_dir", "") or None)
+        symbols = src.watchlist_symbols()
+        if symbols:
+            return symbols, "通达信自选股(zxg.blk)"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("读取通达信自选股失败(%s), 回退到 %s", exc, fallback_file)
+
+    path = PROJECT_ROOT / fallback_file
     codes = []
-    for line in path.read_text(encoding='utf-8').splitlines():
-        line = line.strip()
-        if line and not line.startswith('#'):
-            code = line.split()[0] if ' ' in line else line
-            codes.append(code)
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                codes.append(line.split()[0])
+    return codes, f"文本文件 {fallback_file}"
 
-    return codes
+
+# ── 上下文构建(复刻 AppContext.bootstrap, 但允许替换 provider profile) ───────
+
+def build_shared_context(profile_name: str):
+    """按 provider profile 构建一份可跨线程共享的分析组件."""
+    from pa_agent.config.paths import (
+        SETTINGS_JSON_PATH,
+        RECORDS_PENDING_DIR,
+        EXPERIENCE_DIR,
+        PROMPT_DIR,
+    )
+    from pa_agent.config.settings import load_settings
+    from pa_agent.util.logging import configure_logging
+    from pa_agent.util.event_bus import EventBus
+    from pa_agent.ai.deepseek_client import DeepSeekClient
+    from pa_agent.ai.prompt_assembler import PromptAssembler
+    from pa_agent.ai.router import route_strategy_files
+    from pa_agent.ai.json_validator import JsonValidator
+    from pa_agent.records.pending_writer import PendingWriter
+    from pa_agent.records.experience_reader import ExperienceReader
+    from pa_agent.records.decision_csv_logger import DecisionCSVLogger
+    from pa_agent.records.decision_excel_logger import DecisionExcelLogger
+
+    settings = load_settings(SETTINGS_JSON_PATH)
+
+    profiles = getattr(settings, "provider_profiles", None) or {}
+    if profile_name == "active":
+        profile_name = str(getattr(settings, "active_provider_name", "") or "")
+    if profile_name and profile_name in profiles:
+        settings.provider = profiles[profile_name]
+    else:
+        # 未指定或名字不存在 → 用当前生效 provider(与 GUI 一致)
+        profile_name = f"当前provider({settings.provider.model})"
+
+    configure_logging(api_key=settings.provider.api_key)
+
+    app_logger = logging.getLogger("pa_agent")
+    event_bus = EventBus()
+    client = DeepSeekClient(settings=settings.provider, logger_=app_logger)
+    exp_reader = ExperienceReader(experience_dir=EXPERIENCE_DIR, logger=app_logger)
+    assembler = PromptAssembler(
+        prompt_dir=PROMPT_DIR,
+        experience_reader=exp_reader,
+        prompt_settings=settings.prompt,
+    )
+    validator = JsonValidator(settings)
+    pending_writer = PendingWriter(
+        pending_dir=RECORDS_PENDING_DIR,
+        event_bus=event_bus,
+        api_key=settings.provider.api_key,
+    )
+    csv_logger = DecisionCSVLogger(
+        csv_path=getattr(settings.general, "decision_csv_path", "records/trading_decisions.csv"),
+        enabled=getattr(settings.general, "enable_decision_csv_logging", True),
+    )
+    excel_logger = DecisionExcelLogger(
+        xlsx_path=getattr(settings.general, "decision_excel_path", "records/trading_decisions.xlsx"),
+        enabled=getattr(settings.general, "enable_decision_excel_logging", True),
+    )
+
+    return {
+        "profile": profile_name,
+        "settings": settings,
+        "client": client,
+        "assembler": assembler,
+        "router": route_strategy_files,
+        "validator": validator,
+        "pending_writer": pending_writer,
+        "exp_reader": exp_reader,
+        "csv_logger": csv_logger,
+        "excel_logger": excel_logger,
+    }
 
 
-def analyze_single_stock(
-    symbol: str,
-    timeframe: str,
-    output_dir: str,
-    ctx_factory: callable
-) -> dict:
-    """分析单只股票（线程安全版本）."""
+# ── 每线程资源(复用 TDX 长连接) ──────────────────────────────────────────────
+
+_tls = threading.local()
+
+
+def _thread_tdx():
+    """返回当前线程复用的 TDXSource(长连接, 避免每只股票重新握手)."""
+    src = getattr(_tls, "tdx", None)
+    if src is None:
+        from pa_agent.data.factory import create_data_source
+
+        src = create_data_source("tdx")
+        src.connect()
+        _tls.tdx = src
+    return src
+
+
+# ── 单只股票分析 ──────────────────────────────────────────────────────────────
+
+def analyze_one_stock(symbol: str, timeframe: str, ctx: dict, output_dir: Path) -> dict:
+    """分析单只股票: 取K线 → 正式分析帧 → 两阶段编排 → 保存结果."""
     from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
-    from pa_agent.data.base import KlineFrame
+    from pa_agent.data.snapshot import build_analysis_frame
     from pa_agent.util.threading import CancelToken
-    from pa_agent.data.factory import create_data_source
 
     result = {
         "symbol": symbol,
@@ -57,416 +181,273 @@ def analyze_single_stock(
         "decision": None,
     }
 
-    # 每个线程创建自己的数据源连接
-    tdx = None
+    tdx = _thread_tdx()
+    bars = None
+    last_err: Exception | None = None
 
-    try:
-        # 创建线程本地的 AppContext
-        ctx = ctx_factory()
+    for attempt in range(1 + RETRIES_PER_STOCK):
+        try:
+            tdx.subscribe(symbol, timeframe)
+            bars = tdx.latest_snapshot(FETCH_BARS)
+            if bars:
+                break
+            last_err = ValueError("未返回K线数据")
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+            tdx.disconnect()          # 丢弃可能坏掉的长连接, 下次重建
+            _tls.tdx = None
+        if attempt < RETRIES_PER_STOCK:
+            time.sleep(RETRY_WAIT_S)
 
-        # 创建数据源
-        tdx = create_data_source('tdx')
-        tdx.connect()
+    if not bars:
+        result["error"] = f"K线获取失败: {last_err}"
+        return result
 
-        # 订阅股票
-        tdx.subscribe(symbol, timeframe)
+    # 与 GUI 完全一致的分析帧构建(丢弃形成中K线 + 指标预热)
+    frame = build_analysis_frame(list(bars), ANALYSIS_BARS, symbol, timeframe)
+    if frame is None:
+        result["error"] = f"可用已收盘K线不足 {ANALYSIS_BARS} 根"
+        return result
 
-        # 获取 K 线数据
-        bars = tdx.latest_snapshot(100)
+    orchestrator = TwoStageOrchestrator(
+        client=ctx["client"],
+        assembler=ctx["assembler"],
+        router=ctx["router"],
+        validator=ctx["validator"],
+        pending_writer=ctx["pending_writer"],
+        exp_reader=ctx["exp_reader"],
+        settings=ctx["settings"],
+        csv_logger=ctx["csv_logger"],
+        excel_logger=ctx["excel_logger"],
+    )
+    record = orchestrator.submit(frame=frame, cancel_token=CancelToken(), on_event=lambda evt: None)
 
-        if not bars:
-            raise ValueError(f"未获取到数据")
+    if not record.stage2_decision:
+        exc_info = record.exception
+        result["error"] = f"未返回决策: {exc_info}" if exc_info else "未返回决策(阶段一/二校验失败)"
+        return result
 
-        logger.info("[%s] 获取到 %d 根 K 线", symbol, len(bars))
+    decision = record.stage2_decision
+    terminal = decision.get("terminal") or {}
+    order = decision.get("decision") or {}
+    result["success"] = True
+    result["decision"] = {
+        "outcome": terminal.get("outcome"),
+        "node_id": terminal.get("node_id"),
+        "label": terminal.get("label"),
+        "order_direction": order.get("order_direction"),
+        "order_type": order.get("order_type"),
+        "entry_price": order.get("entry_price"),
+        "stop_loss_price": order.get("stop_loss_price"),
+        "take_profit_price": order.get("take_profit_price"),
+        "trade_confidence": order.get("trade_confidence"),
+        "estimated_win_rate": order.get("estimated_win_rate"),
+    }
 
-        # 构建 KlineFrame
-        from pa_agent.data.base import IndicatorBundle
-        from pa_agent.util.timefmt import now_local_ms
-
-        # 计算指标
-        def calculate_indicators(bars):
-            """计算 EMA20 和 ATR14 指标."""
-            import numpy as np
-
-            bar_count = len(bars)
-            closes = [bar.close for bar in bars]
-            highs = [bar.high for bar in bars]
-            lows = [bar.low for bar in bars]
-
-            # 计算 EMA20（从旧到新）
-            ema20_values = []
-            ema = None
-            alpha = 2 / (20 + 1)
-
-            for close in reversed(closes):  # 从最旧的开始
-                if ema is None:
-                    ema = close
-                else:
-                    ema = alpha * close + (1 - alpha) * ema
-                ema20_values.append(ema)
-
-            ema20_values.reverse()  # 转回从新到旧
-
-            # 计算 ATR14
-            atr14_values = []
-            tr_values = []
-
-            # 从旧到新计算
-            for i in range(len(bars) - 1, -1, -1):
-                if i == len(bars) - 1:
-                    # 第一根K线
-                    tr = highs[i] - lows[i]
-                else:
-                    high_low = highs[i] - lows[i]
-                    high_close = abs(highs[i] - closes[i + 1])
-                    low_close = abs(lows[i] - closes[i + 1])
-                    tr = max(high_low, high_close, low_close)
-                tr_values.append(tr)
-
-            # 计算 ATR（14周期移动平均）
-            atr = None
-            alpha_atr = 1 / 14
-
-            for tr in tr_values:
-                if atr is None:
-                    atr = tr
-                else:
-                    atr = alpha_atr * tr + (1 - alpha_atr) * atr
-                atr14_values.append(atr)
-
-            atr14_values.reverse()  # 转回从新到旧
-
-            return tuple(ema20_values), tuple(atr14_values)
-
-        ema20_vals, atr14_vals = calculate_indicators(bars)
-
-        indicators = IndicatorBundle(
-            ema20=ema20_vals,
-            atr14=atr14_vals
-        )
-
-        kline_frame = KlineFrame(
-            symbol=symbol,
-            timeframe=timeframe,
-            bars=tuple(bars),
-            indicators=indicators,
-            snapshot_ts_local_ms=now_local_ms()
-        )
-
-        # 创建分析器
-        orchestrator = TwoStageOrchestrator(
-            client=ctx.client,
-            assembler=ctx.assembler,
-            router=ctx.router,
-            validator=ctx.validator,
-            pending_writer=ctx.pending_writer,
-            exp_reader=ctx.exp_reader,
-            csv_logger=ctx.csv_logger,
-            excel_logger=ctx.excel_logger,
-        )
-
-        # 执行两阶段分析
-        cancel_token = CancelToken()
-
-        record = orchestrator.submit(
-            frame=kline_frame,
-            cancel_token=cancel_token,
-            on_event=lambda evt: None  # 多线程模式下不打印事件
-        )
-
-        # 检查分析是否成功
-        logger.debug("[%s] record: stage1=%s, stage2=%s",
-                    symbol,
-                    bool(record.stage1_diagnosis),
-                    bool(record.stage2_decision))
-
-        if record.stage2_decision:
-            result["success"] = True
-            result["decision"] = {
-                "操作方向": record.stage2_decision.get("操作方向"),
-                "入场建议": record.stage2_decision.get("入场建议"),
-                "风险水平": record.stage2_decision.get("风险水平"),
-                "止损价": record.stage2_decision.get("止损价"),
-                "目标价": record.stage2_decision.get("目标价"),
-            }
-
-            # 保存完整记录
-            record_dict = {
-                "meta": {
-                    "symbol": record.meta.symbol,
-                    "timeframe": record.meta.timeframe,
-                    "timestamp": record.meta.timestamp,
-                },
-                "stage1_diagnosis": record.stage1_diagnosis,
-                "stage2_decision": record.stage2_decision,
-                "strategy_files_used": record.strategy_files_used,
-            }
-
-            # 保存文件
-            output_path = Path(output_dir)
-            output_path.mkdir(parents=True, exist_ok=True)
-
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            # 添加线程ID避免文件名冲突
-            filename = f"{symbol}_{timeframe}_{timestamp}_{threading.current_thread().ident}.json"
-            file_path = output_path / filename
-
-            file_path.write_text(
-                json.dumps(record_dict, ensure_ascii=False, indent=2),
-                encoding='utf-8'
-            )
-
-            result["file"] = str(file_path)
-
-            logger.info("[OK] %s 分析完成: %s",
-                       symbol,
-                       record.stage2_decision.get("操作方向", "N/A"))
-        else:
-            # 保存失败的记录以便调试
-            error_msg = f"分析未返回决策结果"
-            if record.exception:
-                error_msg = f"{error_msg}: {record.exception}"
-
-            logger.warning("[%s] %s (stage1=%s, stage2=%s)",
-                         symbol, error_msg,
-                         "OK" if record.stage1_diagnosis else "FAIL",
-                         "OK" if record.stage2_decision else "FAIL")
-
-            raise ValueError(error_msg)
-
-    except Exception as e:
-        result["error"] = str(e)
-        logger.error("[FAIL] %s 分析失败: %s", symbol, e)
-
-    finally:
-        if tdx:
-            try:
-                tdx.disconnect()
-            except Exception:
-                pass
-
+    record_dict = {
+        "meta": {
+            "symbol": getattr(record.meta, "symbol", symbol),
+            "timeframe": getattr(record.meta, "timeframe", timeframe),
+            "timestamp": getattr(record.meta, "timestamp", None),
+            "provider_profile": ctx["profile"],
+            "model": ctx["settings"].provider.model,
+        },
+        "stage1_diagnosis": record.stage1_diagnosis,
+        "stage2_decision": record.stage2_decision,
+        "strategy_files_used": record.strategy_files_used,
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_path = output_dir / f"{symbol}_{timeframe}_{ts}.json"
+    file_path.write_text(json.dumps(record_dict, ensure_ascii=False, indent=2), encoding="utf-8")
+    result["file"] = str(file_path)
     return result
 
 
-def batch_analyze_with_ai_multithread(
-    stock_list_file: str = "my_stocks.txt",
-    timeframe: str = "1h",
-    output_dir: str = "batch_analysis_results",
-    max_workers: int = 10
-):
-    """使用多线程批量分析自选股."""
-    from pa_agent.app_context import AppContext
+# ── 批量执行 ──────────────────────────────────────────────────────────────────
 
-    # 加载自选股列表
-    logger.info("加载自选股列表: %s", stock_list_file)
-    stock_codes = load_stock_list(stock_list_file)
+def run_batch(
+    profile_name: str,
+    symbols: list[str],
+    timeframe: str,
+    output_root: str,
+    max_workers: int,
+) -> list[dict]:
+    ctx = build_shared_context(profile_name)
+    output_dir = Path(output_root) / str(ctx["profile"]).replace("(", "_").replace(")", "")
 
-    if not stock_codes:
-        logger.error("未找到自选股")
-        return
+    logger.info("=" * 62)
+    logger.info("批次: %s | 模型: %s | %s", ctx["profile"], ctx["settings"].provider.model,
+                ctx["settings"].provider.base_url)
+    logger.info("股票数: %d | 周期: %s | 并发: %d", len(symbols), timeframe, max_workers)
+    logger.info("结果目录: %s", output_dir)
+    logger.info("=" * 62)
 
-    total = len(stock_codes)
-    logger.info("共加载 %d 只股票", total)
-    logger.info("时间周期: %s", timeframe)
-    logger.info("并发线程数: %d", max_workers)
-    logger.info("预计耗时: %.1f 分钟", total * 2 / max_workers / 60)  # 假设每只2秒
-    print()
+    results: list[dict] = []
+    done = 0
+    ok = 0
+    t0 = time.monotonic()
 
-    # 创建 AppContext 工厂函数
-    def create_context():
-        """为每个线程创建独立的 AppContext."""
-        return AppContext.bootstrap()
-
-    results = []
-    completed = 0
-    start_time = datetime.now()
-
-    # 使用线程池
-    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="Analyzer") as executor:
-        # 提交所有任务
-        future_to_symbol = {
-            executor.submit(analyze_single_stock, symbol, timeframe, output_dir, create_context): symbol
-            for symbol in stock_codes
-        }
-
-        # 处理完成的任务
-        for future in as_completed(future_to_symbol):
-            symbol = future_to_symbol[future]
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="an") as pool:
+        futures = {pool.submit(analyze_one_stock, s, timeframe, ctx, output_dir): s for s in symbols}
+        for fut in as_completed(futures):
+            sym = futures[fut]
             try:
-                result = future.result()
-                results.append(result)
-                completed += 1
+                res = fut.result()
+            except Exception as exc:  # noqa: BLE001
+                res = {"symbol": sym, "success": False, "error": f"线程异常: {exc}", "decision": None}
+            results.append(res)
+            done += 1
+            if res["success"]:
+                ok += 1
+                d = res["decision"] or {}
+                op = d.get("outcome") or "?"
+                if d.get("order_direction"):
+                    op = f"{op}/{d['order_direction']}"
+                logger.info("[%d/%d] OK  %s -> %s", done, len(symbols), sym, op)
+            else:
+                logger.warning("[%d/%d] FAIL %s : %s", done, len(symbols), sym, res["error"])
+            if done % 10 == 0 or done == len(symbols):
+                elapsed = time.monotonic() - t0
+                eta = elapsed / done * (len(symbols) - done)
+                logger.info("进度 %d/%d (成功%d) 用时%.1f分 预计剩余%.1f分",
+                            done, len(symbols), ok, elapsed / 60, eta / 60)
 
-                # 打印进度
-                elapsed = (datetime.now() - start_time).total_seconds()
-                progress = completed / total * 100
-                avg_time = elapsed / completed
-                remaining = (total - completed) * avg_time
-
-                logger.info(
-                    "进度: %d/%d (%.1f%%) | 已用时: %.1f分钟 | 预计剩余: %.1f分钟",
-                    completed, total, progress,
-                    elapsed / 60, remaining / 60
-                )
-
-            except Exception as e:
-                logger.error("处理 %s 时出错: %s", symbol, e)
-                results.append({
-                    "symbol": symbol,
-                    "success": False,
-                    "error": str(e)
-                })
-                completed += 1
-
-    # 统计
-    success_count = sum(1 for r in results if r["success"])
-    failed_count = total - success_count
-    total_time = (datetime.now() - start_time).total_seconds() / 60
-
-    # 保存汇总
-    summary_path = Path(output_dir) / f"summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    summary_path.parent.mkdir(parents=True, exist_ok=True)
-
+    minutes = (time.monotonic() - t0) / 60
     summary = {
         "batch_time": datetime.now().isoformat(),
+        "provider_profile": ctx["profile"],
+        "model": ctx["settings"].provider.model,
         "timeframe": timeframe,
-        "total": total,
-        "success": success_count,
-        "failed": failed_count,
-        "duration_minutes": round(total_time, 2),
+        "total": len(symbols),
+        "success": ok,
+        "failed": len(symbols) - ok,
+        "duration_minutes": round(minutes, 2),
         "max_workers": max_workers,
-        "results": results
+        "results": results,
     }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = output_dir / f"summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    summary_path.write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2),
-        encoding='utf-8'
-    )
-
-    # 导出值得参与的 setup
     export_worthy_setups(results, output_dir)
 
-    # 打印统计
-    print()
-    print("=" * 60)
-    print("批量分析完成")
-    print("=" * 60)
-    print(f"总数: {total}")
-    print(f"成功: {success_count}")
-    print(f"失败: {failed_count}")
-    print(f"总耗时: {total_time:.1f} 分钟")
-    print(f"平均速度: {total_time * 60 / total:.1f} 秒/股票")
-    print(f"\n结果保存在: {output_dir}/")
-    print(f"汇总文件: {summary_path}")
+    logger.info("批次完成: %s 成功 %d / %d, 耗时 %.1f 分钟, 汇总: %s",
+                ctx["profile"], ok, len(symbols), minutes, summary_path)
+    return results
 
 
-def export_worthy_setups(results: list[dict], output_dir: str):
-    """导出值得参与的 setup."""
+# ── 值得参与的 Setup 导出 ─────────────────────────────────────────────────────
+
+def export_worthy_setups(results: list[dict], output_dir: Path) -> None:
+    """筛选 terminal.outcome=trade(明确给出下单建议)的股票并导出."""
     worthy = []
-
     for r in results:
         if not r["success"]:
             continue
+        d = r.get("decision") or {}
+        if d.get("outcome") != "trade":
+            continue
+        worthy.append({
+            "股票代码": r["symbol"],
+            "周期": r.get("timeframe"),
+            "方向": d.get("order_direction"),
+            "订单类型": d.get("order_type"),
+            "入场价": d.get("entry_price"),
+            "止损价": d.get("stop_loss_price"),
+            "目标价": d.get("take_profit_price"),
+            "交易置信度": d.get("trade_confidence"),
+            "预估胜率": d.get("estimated_win_rate"),
+            "决策节点": d.get("node_id"),
+            "决策摘要": d.get("label"),
+        })
 
-        decision = r.get("decision", {})
-        operation = decision.get("操作方向", "")
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    (output_dir / f"worthy_setups_{stamp}.json").write_text(
+        json.dumps(worthy, ensure_ascii=False, indent=2), encoding="utf-8")
 
-        # 筛选条件：非观望状态
-        if operation and operation != "观望":
-            worthy.append({
-                "股票代码": r["symbol"],
-                "操作方向": operation,
-                "入场建议": decision.get("入场建议", ""),
-                "风险水平": decision.get("风险水平", ""),
-                "止损价": decision.get("止损价", ""),
-                "目标价": decision.get("目标价", ""),
-            })
-
-    if not worthy:
-        logger.info("未找到值得参与的 setup")
-        return
-
-    # 保存为 JSON
-    output_path = Path(output_dir) / f"worthy_setups_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    output_path.write_text(
-        json.dumps(worthy, ensure_ascii=False, indent=2),
-        encoding='utf-8'
-    )
-
-    # 保存为文本表格
-    txt_path = Path(output_dir) / f"worthy_setups_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-
-    lines = [
-        "值得参与的 Setup 列表",
-        "=" * 80,
-        f"总计: {len(worthy)} 个",
-        ""
-    ]
-
-    for i, setup in enumerate(worthy, 1):
-        lines.append(f"{i}. {setup['股票代码']} - {setup['操作方向']}")
-        lines.append(f"   入场: {setup['入场建议']}")
-        lines.append(f"   风险: {setup['风险水平']}")
-        lines.append(f"   止损: {setup['止损价']}")
-        lines.append(f"   目标: {setup['目标价']}")
+    lines = [f"值得参与的 Setup 列表 (outcome=trade)  共 {len(worthy)} 个", "=" * 70, ""]
+    for i, s in enumerate(worthy, 1):
+        lines.append(f"{i}. {s['股票代码']} [{s['周期']}] {s['方向']} {s['订单类型']} "
+                     f"置信:{s['交易置信度']} 胜率:{s['预估胜率']}")
+        lines.append(f"   入场: {s['入场价']}   止损: {s['止损价']}   目标: {s['目标价']}")
+        lines.append(f"   节点 {s['决策节点']}: {s['决策摘要']}")
         lines.append("")
+    (output_dir / f"worthy_setups_{stamp}.txt").write_text("\n".join(lines), encoding="utf-8")
 
-    txt_path.write_text('\n'.join(lines), encoding='utf-8')
-
-    logger.info(f"发现 {len(worthy)} 个值得参与的 setup")
-    logger.info(f"已导出到: {output_path}")
-    logger.info(f"文本版本: {txt_path}")
-
-    # 打印前10个
-    print(f"\n值得参与的 Setup 总数: {len(worthy)}")
-    print("\n前10个:")
-    for i, setup in enumerate(worthy[:10], 1):
-        print(f"  {i}. {setup['股票代码']} - {setup['操作方向']} ({setup['风险水平']})")
+    logger.info("值得参与的 setup (trade): %d 个 (worthy_setups_%s.json/txt)", len(worthy), stamp)
 
 
-def main():
-    """主函数."""
-    import argparse
+# ── CLI ───────────────────────────────────────────────────────────────────────
 
-    parser = argparse.ArgumentParser(description='批量 AI 分析通达信自选股（多线程版）')
-    parser.add_argument('--stocks', default='my_stocks.txt', help='自选股列表文件')
-    parser.add_argument('--timeframe', default='1h',
-                       choices=['1m', '5m', '15m', '30m', '1h', '1d'],
-                       help='时间周期')
-    parser.add_argument('--output', default='batch_analysis_results',
-                       help='结果输出目录')
-    parser.add_argument('--workers', type=int, default=10,
-                       help='并发线程数（默认10，建议5-20之间）')
-
+def main() -> None:
+    parser = argparse.ArgumentParser(description="批量 AI 分析通达信自选股(多线程/多Provider)")
+    parser.add_argument("--profile", default="active",
+                        help="settings.json provider_profiles 中的方案名(gmini/ds/莫奈/默认); 默认=当前激活方案")
+    parser.add_argument("--timeframe", default="1h", choices=["1m", "5m", "15m", "30m", "1h", "1d"])
+    parser.add_argument("--limit", type=int, default=0, help="只分析前 N 只(0=全部)")
+    parser.add_argument("--skip", type=int, default=0, help="跳过前 N 只")
+    parser.add_argument("--workers", type=int, default=25, help="并发线程数(默认25)")
+    parser.add_argument("--output", default="batch_analysis_results", help="结果根目录")
+    parser.add_argument("--symbols", default="",
+                        help="只分析指定股票: 逗号分隔代码, 或 @文件 (每行一代码); 提供@文件时跳过自选列表读取")
+    parser.add_argument("--dual", nargs=2, metavar=("前段", "后段"),
+                        help='一条命令跑两批, 例: --dual gmini:150 ds:rest')
     args = parser.parse_args()
 
-    # 计算预计时间
-    stock_count = len(load_stock_list(args.stocks))
-    estimated_minutes = stock_count * 2 / args.workers / 60
-
-    print(f"准备分析 {stock_count} 只股票")
-    print(f"并发数: {args.workers} 线程")
-    print(f"预计耗时: {estimated_minutes:.1f} 分钟")
-    print()
-
-    try:
-        response = input("开始批量分析? [Y/n] ").strip().lower()
-        if response and response != 'y':
-            print("已取消")
-            return
-    except (KeyboardInterrupt, EOFError):
-        print("\n已取消")
+    if args.symbols:
+        spec = args.symbols
+        if spec.startswith("@"):
+            all_symbols = [
+                ln.strip() for ln in (PROJECT_ROOT / spec[1:]).read_text(encoding="utf-8").splitlines()
+                if ln.strip() and not ln.strip().startswith("#")
+            ]
+            src = f"指定文件 {spec[1:]}"
+        else:
+            all_symbols = [s.strip() for s in spec.split(",") if s.strip()]
+            src = "命令行指定"
+        logger.info("自选股来源: %s, 共 %d 只", src, len(all_symbols))
+        if not all_symbols:
+            logger.error("指定股票列表为空")
+            sys.exit(1)
+        # 指定股票时 --limit/--skip 不再适用, 直接单批跑
+        run_batch(args.profile, all_symbols, args.timeframe, args.output, args.workers)
         return
 
-    batch_analyze_with_ai_multithread(args.stocks, args.timeframe, args.output, args.workers)
+    all_symbols, src = load_watchlist()
+    if not all_symbols:
+        logger.error("自选股列表为空")
+        sys.exit(1)
+    logger.info("自选股来源: %s, 共 %d 只", src, len(all_symbols))
+
+    if args.dual:
+        head_spec, tail_spec = args.dual
+        head_profile, _, head_n = head_spec.partition(":")
+        tail_profile, _, _ = tail_spec.partition(":")
+        n = int(head_n) if head_n else 150
+        head, tail = all_symbols[:n], all_symbols[n:]
+        logger.info("双批模式: 前 %d 只 -> %s ; 其余 %d 只 -> %s", len(head), head_profile, len(tail), tail_profile)
+        if head:
+            run_batch(head_profile, head, args.timeframe, args.output, args.workers)
+        if tail:
+            run_batch(tail_profile, tail, args.timeframe, args.output, args.workers)
+        return
+
+    start = args.skip
+    end = (start + args.limit) if args.limit > 0 else len(all_symbols)
+    symbols = all_symbols[start:end]
+    if not symbols:
+        logger.error("切片为空 (skip=%d, limit=%d, 总数=%d)", args.skip, args.limit, len(all_symbols))
+        sys.exit(1)
+    run_batch(args.profile, symbols, args.timeframe, args.output, args.workers)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
         print("\n\n已中断")
         sys.exit(130)
-    except Exception as e:
-        logger.error("程序异常: %s", e, exc_info=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("程序异常: %s", exc, exc_info=True)
         sys.exit(1)

@@ -124,6 +124,47 @@ def test_packy_claude_thinking_uses_budget_not_reasoning_effort():
     assert extra["thinking"]["budget_tokens"] == 127_999
 
 
+def test_relay_deepseek_thinking_off_sends_explicit_disabled():
+    """Relayed DeepSeek v4 hybrid models think by default; thinking=False must
+    send an explicit disabled param instead of omitting it silently."""
+    settings = _make_settings()
+    settings.base_url = "https://api-b.monetlabs.art/v1"
+    settings.model = "deepseek-v4.1-flash"
+    settings.thinking = False
+    settings.reasoning_effort = "low"
+    from pa_agent.ai.deepseek_client import _resolve_thinking_params
+
+    extra, effort = _resolve_thinking_params(settings, thinking=False, reasoning_effort=None)
+    assert extra == {"thinking": {"type": "disabled"}}
+    assert effort is None
+
+
+def test_relay_glm_thinking_off_sends_explicit_disabled():
+    """GLM 4.5+ hybrid models share the DeepSeek-style disabled wire format."""
+    settings = _make_settings()
+    settings.base_url = "https://api-b.monetlabs.art/v1"
+    settings.model = "glm-flash"
+    settings.thinking = False
+    from pa_agent.ai.deepseek_client import _resolve_thinking_params
+
+    extra, effort = _resolve_thinking_params(settings, thinking=False, reasoning_effort=None)
+    assert extra == {"thinking": {"type": "disabled"}}
+    assert effort is None
+
+
+def test_relay_non_deepseek_thinking_off_sends_nothing():
+    """Non-DeepSeek models on relays keep the old behaviour: no thinking param."""
+    settings = _make_settings()
+    settings.base_url = "https://api-b.monetlabs.art/v1"
+    settings.model = "claude-sonnet-4-6"
+    settings.thinking = False
+    from pa_agent.ai.deepseek_client import _resolve_thinking_params
+
+    extra, effort = _resolve_thinking_params(settings, thinking=False, reasoning_effort=None)
+    assert extra == {}
+    assert effort is None
+
+
 def test_chat_sends_max_tokens_when_thinking():
     settings = _make_settings()
     settings.base_url = "https://api.deepseek.com"

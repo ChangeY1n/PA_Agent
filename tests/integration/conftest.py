@@ -206,6 +206,14 @@ def frame():
     return make_frame()
 
 
+@pytest.fixture(autouse=True)
+def _fast_network_retry(monkeypatch):
+    """Zero the orchestrator's network-retry backoff so tests never sleep."""
+    from pa_agent.orchestrator import two_stage
+
+    monkeypatch.setattr(two_stage, "NETWORK_RETRY_BACKOFF_S", (0.0, 0.0))
+
+
 @pytest.fixture
 def pending_writer():
     return MagicMock()

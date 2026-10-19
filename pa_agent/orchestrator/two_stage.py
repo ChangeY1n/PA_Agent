@@ -12,7 +12,10 @@ Coordinates the full Stage 1 (diagnosis) → Stage 2 (decision) pipeline:
   9. Persist full record
 
 Cancel checks are performed before each stage and after each API call.
-Network/timeout errors are caught and recorded on the partial record.
+Network/timeout errors are auto-retried up to ``NETWORK_RETRY_MAX_ATTEMPTS``
+(Stage1NetworkRetry / Stage2NetworkRetry events notify the UI), then recorded
+on the partial record.  Failed attempts cannot contribute to ``usage_total``
+(usage is unknown when a stream breaks mid-flight).
 
 Stage 2 validation failure ends the run immediately (``STAGE2_VALIDATION_AUTO_RETRY``
 is always False): no second ``stream_chat`` and no automatic fix-and-revalidate loop.
@@ -21,6 +24,13 @@ from __future__ import annotations
 
 # Explicit policy: never re-call Stage 2 API after validation failure.
 STAGE2_VALIDATION_AUTO_RETRY = False
+
+# 传输层瞬时网络错误（连接中断/超时/对端断开）自动重试：首试 + 最多 2 次重试。
+# 退避等待用 cancel_token.wait() 实现，可被用户取消立即打断。
+# 与 STAGE2_VALIDATION_AUTO_RETRY=False 的区别：校验失败是确定性结果，重试无意义；
+# 网络中断是瞬时故障，重试整段 stream_chat 即可恢复。
+NETWORK_RETRY_MAX_ATTEMPTS = 3
+NETWORK_RETRY_BACKOFF_S: tuple[float, ...] = (2.0, 5.0)
 
 import dataclasses
 import logging
@@ -436,29 +446,20 @@ class TwoStageOrchestrator:
             on_stage_prompt("stage1", s1_system, s1_user)
 
         _thinking, _effort = self._thinking_params()
-        s1_streamed_reasoning = False
-        s1_streamed_content = False
-
-        def _on_s1_reasoning(chunk: str) -> None:
-            nonlocal s1_streamed_reasoning
-            s1_streamed_reasoning = True
-            if on_stage1_reasoning is not None:
-                on_stage1_reasoning(chunk)
-
-        def _on_s1_content(chunk: str) -> None:
-            nonlocal s1_streamed_content
-            s1_streamed_content = True
-            if on_stage1_content is not None:
-                on_stage1_content(chunk)
 
         try:
-            reply_s1 = self._client.stream_chat(
-                messages_s1,
-                on_reasoning_token=_on_s1_reasoning,
-                on_content_token=_on_s1_content,
-                cancel_token=cancel_token,
-                thinking=_thinking,
-                reasoning_effort=_effort,
+            reply_s1, s1_streamed_reasoning, s1_streamed_content = (
+                self._stream_chat_with_network_retry(
+                    stage="stage1",
+                    messages=messages_s1,
+                    on_reasoning_token=on_stage1_reasoning,
+                    on_content_token=on_stage1_content,
+                    cancel_token=cancel_token,
+                    thinking=_thinking,
+                    reasoning_effort=_effort,
+                    on_event=on_event,
+                    retry_event=OrchestratorEvent.Stage1NetworkRetry,
+                )
             )
         except Exception as exc:
             if self._is_network_error(exc):
@@ -672,7 +673,6 @@ class TwoStageOrchestrator:
             strategy_files=strategy_files,
             experience_entries=experience_entries,
             decision_stance=record.meta.decision_stance,
-            previous_record=previous_record,
         )
 
         # ── Step 15: Call AI for Stage 2 ──────────────────────────────────────
@@ -691,29 +691,19 @@ class TwoStageOrchestrator:
             s2_user = next((m.get("content", "") for m in reversed(messages_s2) if m.get("role") == "user"), "")
             on_stage_prompt("stage2", s2_system, s2_user)
 
-        s2_streamed_reasoning = False
-        s2_streamed_content = False
-
-        def _on_s2_reasoning(chunk: str) -> None:
-            nonlocal s2_streamed_reasoning
-            s2_streamed_reasoning = True
-            if on_stage2_reasoning is not None:
-                on_stage2_reasoning(chunk)
-
-        def _on_s2_content(chunk: str) -> None:
-            nonlocal s2_streamed_content
-            s2_streamed_content = True
-            if on_stage2_content is not None:
-                on_stage2_content(chunk)
-
         try:
-            reply_s2 = self._client.stream_chat(
-                messages_s2,
-                on_reasoning_token=_on_s2_reasoning,
-                on_content_token=_on_s2_content,
-                cancel_token=cancel_token,
-                thinking=_thinking,
-                reasoning_effort=_effort,
+            reply_s2, s2_streamed_reasoning, s2_streamed_content = (
+                self._stream_chat_with_network_retry(
+                    stage="stage2",
+                    messages=messages_s2,
+                    on_reasoning_token=on_stage2_reasoning,
+                    on_content_token=on_stage2_content,
+                    cancel_token=cancel_token,
+                    thinking=_thinking,
+                    reasoning_effort=_effort,
+                    on_event=on_event,
+                    retry_event=OrchestratorEvent.Stage2NetworkRetry,
+                )
             )
         except Exception as exc:
             if self._is_network_error(exc):
@@ -915,6 +905,72 @@ class TwoStageOrchestrator:
         p = self._settings.provider
         return p.thinking, p.reasoning_effort
 
+    def _stream_chat_with_network_retry(
+        self,
+        *,
+        stage: str,
+        messages: list[dict[str, Any]],
+        on_reasoning_token: Callable[[str], None] | None,
+        on_content_token: Callable[[str], None] | None,
+        cancel_token: CancelToken,
+        thinking: bool,
+        reasoning_effort: str,
+        on_event: Callable[[OrchestratorEvent], None],
+        retry_event: OrchestratorEvent,
+    ) -> tuple[Any, bool, bool]:
+        """Call ``stream_chat`` with automatic retry on transient network errors.
+
+        Returns ``(reply, streamed_reasoning, streamed_content)``; the streamed
+        flags reflect only the final (successful) attempt — they are reset per
+        attempt so a buffered non-streaming retry still triggers the
+        ``_emit_buffered_stream`` fallback after the UI was cleared.
+
+        Non-retryable errors (including CancelledError and deterministic 4xx)
+        propagate immediately.  When retries are exhausted, or the user cancels
+        during backoff, the last network error is re-raised so the caller's
+        existing ``network_error`` partial-save branch handles it.
+        """
+        last_exc: Exception | None = None
+        for attempt in range(1, NETWORK_RETRY_MAX_ATTEMPTS + 1):
+            streamed = {"reasoning": False, "content": False}
+
+            def _on_reasoning(chunk: str) -> None:
+                streamed["reasoning"] = True
+                if on_reasoning_token is not None:
+                    on_reasoning_token(chunk)
+
+            def _on_content(chunk: str) -> None:
+                streamed["content"] = True
+                if on_content_token is not None:
+                    on_content_token(chunk)
+
+            try:
+                reply = self._client.stream_chat(
+                    messages,
+                    on_reasoning_token=_on_reasoning,
+                    on_content_token=_on_content,
+                    cancel_token=cancel_token,
+                    thinking=thinking,
+                    reasoning_effort=reasoning_effort,
+                )
+                return reply, streamed["reasoning"], streamed["content"]
+            except Exception as exc:
+                if not self._is_retryable_network_error(exc) or attempt >= NETWORK_RETRY_MAX_ATTEMPTS:
+                    raise
+                last_exc = exc
+                backoffs = NETWORK_RETRY_BACKOFF_S or (0.0,)
+                delay = backoffs[min(attempt - 1, len(backoffs) - 1)]
+                logger.warning(
+                    "[%s] 网络错误（第 %d/%d 次尝试）：%s，%.1fs 后自动重试",
+                    stage, attempt, NETWORK_RETRY_MAX_ATTEMPTS, exc, delay,
+                )
+                on_event(retry_event)
+                if cancel_token.wait(delay):
+                    # 用户在退避期间取消：与取消/网络错误竞态时网络错误胜出的
+                    # 现有语义一致，走 network_error partial 分支。
+                    raise last_exc
+        raise last_exc  # pragma: no cover - loop always returns or raises
+
     @staticmethod
     def _is_network_error(exc: Exception) -> bool:
         """Return True if *exc* is a network/timeout error (SDK, httpx, or OS reset)."""
@@ -967,3 +1023,30 @@ class TwoStageOrchestrator:
         if cause is not None and cause is not exc:
             return TwoStageOrchestrator._is_network_error(cause)
         return False
+
+    @classmethod
+    def _is_retryable_network_error(cls, exc: Exception) -> bool:
+        """Network error worth retrying — excludes deterministic 4xx.
+
+        401/403/404/400 (bad key, wrong base_url, unknown model) are classified
+        as network errors by ``_is_network_error`` (APIStatusError) but retrying
+        them just burns backoff time; 429 and transport-layer errors do retry.
+        """
+        if not cls._is_network_error(exc):
+            return False
+        try:
+            import openai  # type: ignore[import]
+
+            if isinstance(
+                exc,
+                (
+                    openai.AuthenticationError,
+                    openai.PermissionDeniedError,
+                    openai.NotFoundError,
+                    openai.BadRequestError,
+                ),
+            ):
+                return False
+        except ImportError:
+            pass
+        return True

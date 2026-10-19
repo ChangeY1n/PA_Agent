@@ -13,6 +13,8 @@
 - 默认「轻量初筛」：每只先用一次约 0.8 万 token 的紧凑调用粗筛，通过的才跑
   完整两阶段（每只约 16 万 token）；初筛方向为空头的直接淘汰（A股无便利做空，
   历史全部出单均为做多；--allow-short 关闭该过滤）。
+- 当前涨停/跌停的股票直接跳过（连初筛也不跑）——停板价无法有效成交，深析
+  出的单不可执行；规则按板块涨跌幅（主板10%、创业/科创20%、北交30%）。
 - 每只进入完整分析的股票走与 GUI 完全相同的管线（build_display_frame +
   TwoStageOrchestrator），记录照常写入 records/pending，之后在 GUI 中切到
   该股即可增量分析。
@@ -26,6 +28,7 @@ import logging
 import sys
 import threading
 import time
+from decimal import Decimal, ROUND_HALF_UP
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -61,6 +64,41 @@ def local_no_trade_gate(stage1_json: dict) -> bool:
         return not route_strategy_files(stage1_json)
     except Exception:  # noqa: BLE001
         return False
+
+
+def _limit_state(symbol: str, bars: list) -> str:
+    """判断当前价是否触及涨停/跌停；返回 "" / "涨停" / "跌停"。
+
+    - 用最新一根（K1）的 close 对比前一根收盘推算的停板价；盘中 K1 未收盘时
+      close 即最新价，同样成立（「当前」停板）。
+    - 涨跌幅按代码前缀：主板 10%，创业板 30/科创 68 为 20%，北交 43/83/87/92
+      为 30%；停板价按交易所规则四舍五入到分。
+    - 局限：ST（5%）无法从K线识别，会漏判为可分析——影响极小，接受。
+    """
+    if len(bars) < 2:
+        return ""
+    last, prev = bars[0], bars[1]
+    prev_close = getattr(prev, "close", None)
+    if not prev_close:
+        return ""
+    if symbol.startswith(("30", "68")):
+        ratio = Decimal("0.20")
+    elif symbol.startswith(("43", "83", "87", "92")):
+        ratio = Decimal("0.30")
+    else:
+        ratio = Decimal("0.10")
+    q = Decimal("0.01")
+    base = Decimal(str(prev_close))
+    up = (base * (Decimal(1) + ratio)).quantize(q, ROUND_HALF_UP)
+    down = (base * (Decimal(1) - ratio)).quantize(q, ROUND_HALF_UP)
+    c = Decimal(str(last.close)).quantize(q)
+    # 停板价是交易所硬边界：真实停板收盘价只能恰好等于；大幅越过只可能是
+    # 除权除息缺口或脏数据，不算停板。
+    if c == up:
+        return "涨停"
+    if c == down:
+        return "跌停"
+    return ""
 
 
 def thread_ctx():
@@ -112,7 +150,7 @@ def analyze_one(
     result = {
         "symbol": symbol,
         "timeframe": timeframe,
-        "status": "failed",  # opportunity | no_order | screened_out | light_pass | failed
+        "status": "failed",  # opportunity | no_order | screened_out | light_pass | limit_skip | failed
         "order_type": "",
         "order_direction": "",
         "entry_price": None,
@@ -137,6 +175,12 @@ def analyze_one(
         bars = tdx.latest_snapshot(bar_count + INDICATOR_WARMUP_BARS + 5)
         if not bars:
             raise ValueError("未获取到 K 线数据")
+
+        limit = _limit_state(symbol, bars)
+        if limit:
+            result["status"] = "limit_skip"
+            result["reasoning"] = f"（{limit}，跳过分析）"
+            return _finish(result, t0)
 
         if mode == "light":
             n_light = max(20, min(light_bars or LIGHT_SCREEN_DEFAULT_BARS, bar_count))
@@ -331,7 +375,7 @@ def main() -> int:
             results.append(r)
             mark = {"opportunity": "★机会", "no_order": "—观望",
                     "screened_out": "·淘汰", "light_pass": "+入围",
-                    "failed": "✗失败"}[r["status"]]
+                    "limit_skip": "■停板", "failed": "✗失败"}[r["status"]]
             light_note = ""
             if r.get("light") and r.get("tokens_light"):
                 light_note = " [初筛%s %s]" % (
@@ -353,6 +397,7 @@ def main() -> int:
     no_order = [r for r in results if r["status"] == "no_order"]
     screened_out = [r for r in results if r["status"] == "screened_out"]
     light_pass = [r for r in results if r["status"] == "light_pass"]
+    limit_skips = [r for r in results if r["status"] == "limit_skip"]
     failed = [r for r in results if r["status"] == "failed"]
 
     tokens_light = sum(r.get("tokens_light") or 0 for r in results)
@@ -375,6 +420,7 @@ def main() -> int:
                 "no_order": len(no_order),
                 "screened_out": len(screened_out),
                 "light_pass": len(light_pass),
+                "limit_skip": len(limit_skips),
                 "failed": len(failed),
                 "tokens_light": tokens_light,
                 "tokens_full": tokens_full,
@@ -396,6 +442,8 @@ def main() -> int:
         line2 += f" · 初筛淘汰 {len(screened_out)}"
         if args.light_only:
             line2 += f" · 入围未深析 {len(light_pass)}"
+    if limit_skips:
+        line2 += f" · 停板跳过 {len(limit_skips)}"
     print(line2)
     print(f"token 用量：初筛 {tokens_light:,} + 完整分析 {tokens_full:,}"
           f" = {tokens_light + tokens_full:,}")
@@ -433,6 +481,11 @@ def main() -> int:
         for r in screened_out:
             reason = (r.get("reasoning") or "")[:50]
             print(f"  {r['symbol']}: {reason}")
+
+    if limit_skips:
+        print("\n停板跳过明细:")
+        for r in limit_skips:
+            print(f"  {r['symbol']}: {(r.get('reasoning') or '')}")
 
     print(f"\n完整结果: {out_dir / 'summary.json'}")
     print("每只股票的完整分析已存入 records/pending，GUI 切到该股可查看/增量分析")

@@ -39,3 +39,5 @@ class OrchestratorEvent(Enum):
     RecordSaved = auto()
     Cancelled = auto()
     InsufficientData = auto()
+    Stage1NetworkRetry = auto()
+    Stage2NetworkRetry = auto()

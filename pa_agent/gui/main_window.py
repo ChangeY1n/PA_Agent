@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from PyQt6.QtCore import QThread, QTimer, pyqtSignal, QObject
-from PyQt6.QtGui import QAction, QShowEvent
+from PyQt6.QtGui import QAction, QColor, QShowEvent
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -33,11 +33,10 @@ logger = logging.getLogger(__name__)
 
 # Zombie timeout in milliseconds (5 seconds)
 _WORKER_JOIN_TIMEOUT_MS = 5000
-
-# GUI 线程上后台数据线程（RefreshLoop / SnapshotFetchWorker）的最长 join 等待；
-# 超时按僵尸处理、稍后回收。只用于限定 UI 冻结上界——AI worker 取消仍用
-# 5000ms 完整超时（取消正确性敏感）。
-_DATA_THREAD_JOIN_TIMEOUT_MS = 300
+# 注：RefreshLoop / SnapshotFetchWorker 等数据线程不再在 GUI 线程上 join
+# 等待（阻塞式行情请求可达数秒，曾致每次切换冻结 UI ≥300ms）——改为
+# 立即转入僵尸队列异步回收；5000ms 完整超时仅保留给 AI worker 取消
+# （取消正确性敏感）。
 
 
 def _parse_sr_price(raw: object) -> float | None:
@@ -126,6 +125,8 @@ class _AnalysisWorker(QThread):
             OrchestratorEvent.Cancelled: "已取消",
             OrchestratorEvent.Stage1Failed: "阶段一失败",
             OrchestratorEvent.Stage2Failed: "阶段二失败",
+            OrchestratorEvent.Stage1NetworkRetry: "阶段一网络中断，自动重试中…",
+            OrchestratorEvent.Stage2NetworkRetry: "阶段二网络中断，自动重试中…",
         }
 
         def on_event(event: OrchestratorEvent) -> None:
@@ -250,7 +251,6 @@ class MainWindow(QMainWindow):
         self._debug_widget = self._ai_sidebar.debug
         self._prompt_files_panel = self._ai_sidebar.prompt_files
         self._decision_panel = self._ai_sidebar.decision
-        self._future_trend_panel = self._ai_sidebar.future_trend
         self._decision_tree_panel = self._ai_sidebar.decision_tree
         self._decision_flow_viz_panel = self._ai_sidebar.decision_flow_viz
 
@@ -420,6 +420,13 @@ class MainWindow(QMainWindow):
         self._apply_data_source_symbol_placeholder()
         ctrl_layout.addWidget(self._symbol_combo)
 
+        # 收藏当前品种（收藏后置顶显示在品种下拉列表，金色标注）
+        self._fav_btn = QPushButton("☆")
+        self._fav_btn.setToolTip("收藏/取消收藏当前品种\n收藏的品种固定显示在下拉列表顶部")
+        self._fav_btn.setFixedWidth(32)
+        self._fav_btn.clicked.connect(self._on_toggle_favorite_symbol)
+        ctrl_layout.addWidget(self._fav_btn)
+
         # 刷新股票列表（通达信模式：重新读取自选股，运行期间自选变化后点此更新）
         self._symbol_refresh_btn = QPushButton("↻ 自选")
         self._symbol_refresh_btn.setToolTip(
@@ -430,6 +437,7 @@ class MainWindow(QMainWindow):
         self._symbol_refresh_btn.hide()
         ctrl_layout.addWidget(self._symbol_refresh_btn)
         self._populate_symbol_combo_for_source()
+        self._update_favorite_button_state()
 
         self._symbol_alert_label = QLabel("")
         self._symbol_alert_label.setStyleSheet("color: #f85149; font-size: 11px;")
@@ -675,14 +683,15 @@ class MainWindow(QMainWindow):
     def _stop_refresh_loop(self) -> None:
         """Stop the background RefreshLoop thread if running.
 
-        Disconnects signals before waiting so that a zombie loop's callbacks
+        Disconnects signals before stopping so that a zombie loop's callbacks
         cannot fire after the owning MainWindow has moved on (e.g. symbol/tf
         switch, new worker started).
 
-        If the loop does not finish within ``_WORKER_JOIN_TIMEOUT_MS`` it is
-        tracked as a zombie.  Zombie loops are reaped later in
-        ``_reap_zombie_loops()`` so their QThread resources are eventually
-        freed.
+        数据线程可能卡在阻塞式行情请求里（eltdx/TradingView 超时可达数秒），
+        在 GUI 线程上 join 等待会冻结界面（实测每次 ≥300ms，日志中大量
+        "RefreshLoop did not finish within 300 ms" 即此路径）。因此这里
+        不做任何等待：设置 cancel token 后立即把仍在运行的循环转入
+        ``_zombie_loops``，由 ``_reap_zombie_loops()`` 在其自行退出后回收。
         """
         loop = getattr(self, "_refresh_loop", None)
         token = getattr(self, "_refresh_cancel_token", None)
@@ -701,8 +710,7 @@ class MainWindow(QMainWindow):
             token.set()
         # Actively close the live WebSocket so any blocked get_hist() recv()
         # exits immediately instead of waiting out the full timeout.  This is
-        # the only reliable way to unblock the RefreshLoop thread before the
-        # join below.
+        # the only reliable way to unblock the RefreshLoop thread promptly.
         data_source = getattr(self._ctx, "data_source", None)
         if data_source is not None:
             close_ws = getattr(data_source, "_close_tv_socket", None)
@@ -712,22 +720,14 @@ class MainWindow(QMainWindow):
                 except Exception:  # noqa: BLE001
                     pass
         if loop.isRunning():
-            loop.wait(_DATA_THREAD_JOIN_TIMEOUT_MS)
-            if loop.isRunning():
-                # RefreshLoop is stuck in a blocking socket/HTTP call — it will
-                # eventually time out and check the cancel token, but until
-                # then we track it as a zombie so it can be reaped later.
-                logger.warning(
-                    "RefreshLoop did not finish within %d ms; tracking as zombie",
-                    _DATA_THREAD_JOIN_TIMEOUT_MS,
-                )
-                zombies = getattr(self, "_zombie_loops", None)
-                if zombies is None:
-                    zombies = []
-                    self._zombie_loops = zombies
-                zombies.append(loop)
-            else:
-                loop.deleteLater()
+            # 循环正卡在阻塞请求中——cancel token 已设置，它会在当前请求
+            # 超时返回后自行退出；期间转入僵尸队列等待回收。
+            logger.debug("RefreshLoop still busy; tracking as zombie for later reap")
+            zombies = getattr(self, "_zombie_loops", None)
+            if zombies is None:
+                zombies = []
+                self._zombie_loops = zombies
+            zombies.append(loop)
         else:
             loop.deleteLater()
         self._refresh_loop = None
@@ -739,6 +739,10 @@ class MainWindow(QMainWindow):
         Uses a generation-based invalidation: the callback closures check
         ``_snapshot_fetch_id`` before acting, so stale workers that finish
         after cancellation are silently ignored.
+
+        与 ``_stop_refresh_loop`` 同理：worker 可能卡在阻塞式行情请求里，
+        不在 GUI 线程上 join 等待；保留引用到 ``_stale_fetch_workers``，
+        由 ``_reap_zombie_loops()`` 在其退出后 deleteLater。
         """
         sfw = getattr(self, "_snapshot_fetch_worker", None)
         if sfw is not None:
@@ -746,33 +750,38 @@ class MainWindow(QMainWindow):
             self._snapshot_fetch_id = None
             self._snapshot_fetch_worker = None
             if sfw.isRunning():
-                sfw.wait(_DATA_THREAD_JOIN_TIMEOUT_MS)
-                if sfw.isRunning():
-                    logger.warning(
-                        "SnapshotFetchWorker did not finish within %d ms; "
-                        "it will eventually finish but results will be ignored",
-                        _DATA_THREAD_JOIN_TIMEOUT_MS,
-                    )
+                stale = getattr(self, "_stale_fetch_workers", None)
+                if stale is None:
+                    stale = []
+                    self._stale_fetch_workers = stale
+                stale.append(sfw)
 
     def _reap_zombie_loops(self) -> None:
         """Join any zombie RefreshLoops that have finished since last check.
 
         Called periodically (e.g. from ``_on_worker_done``) to free QThread
-        resources that were stranded when ``_stop_refresh_loop`` timed out.
+        resources that were stranded when ``_stop_refresh_loop`` could not
+        wait for a busy data thread.  Also reaps stale SnapshotFetchWorkers
+        tracked by ``_cancel_snapshot_fetch_worker``.
         """
         zombies = getattr(self, "_zombie_loops", None)
-        if not zombies:
-            return
-        still_alive: list = []
-        for loop in zombies:
-            if loop.isRunning():
-                still_alive.append(loop)
-            else:
-                loop.deleteLater()
-        if still_alive:
+        if zombies:
+            still_alive: list = []
+            for loop in zombies:
+                if loop.isRunning():
+                    still_alive.append(loop)
+                else:
+                    loop.deleteLater()
             self._zombie_loops = still_alive
-        else:
-            self._zombie_loops = []
+        stale = getattr(self, "_stale_fetch_workers", None)
+        if stale:
+            still_stale: list = []
+            for worker in stale:
+                if worker.isRunning():
+                    still_stale.append(worker)
+                else:
+                    worker.deleteLater()
+            self._stale_fetch_workers = still_stale
 
     def _disconnect_data_source(self, data_source: Any) -> None:
         if data_source is None:
@@ -946,9 +955,22 @@ class MainWindow(QMainWindow):
 
         self._symbol_combo.blockSignals(True)
         self._symbol_combo.clear()
+        # 收藏置顶（金色标注），分隔线后接数据源符号列表
+        favorites = self._favorite_symbols()
+        fav_set = set(favorites)
+        source_symbols: list[str] = []
         if symbols:
             cap = 80 if kind == "mt5" else len(symbols)
-            self._symbol_combo.addItems(symbols[:cap])
+            source_symbols = [s for s in symbols[:cap] if s not in fav_set]
+        for i, sym in enumerate(favorites):
+            self._symbol_combo.addItem(sym)
+            self._symbol_combo.setItemData(
+                i, QColor("#e3b341"), Qt.ItemDataRole.ForegroundRole
+            )
+        if favorites and source_symbols:
+            self._symbol_combo.insertSeparator(self._symbol_combo.count())
+        if source_symbols:
+            self._symbol_combo.addItems(source_symbols)
         if current:
             if self._symbol_combo.findText(current) < 0:
                 self._symbol_combo.addItem(current)
@@ -965,6 +987,64 @@ class MainWindow(QMainWindow):
         refresh_btn = getattr(self, "_symbol_refresh_btn", None)
         if refresh_btn is not None:
             refresh_btn.setVisible(kind == "tdx")
+
+    # ── 收藏品种 ─────────────────────────────────────────────────────────────
+
+    def _favorite_symbols(self) -> list[str]:
+        """收藏品种列表（settings 缺失时返回空表）."""
+        settings = getattr(self._ctx, "settings", None)
+        if settings is None:
+            return []
+        try:
+            return list(getattr(settings.general, "favorite_symbols", None) or [])
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _is_current_symbol_favorite(self) -> bool:
+        sym = self._symbol_combo.currentText().strip()
+        return bool(sym) and sym in set(self._favorite_symbols())
+
+    def _update_favorite_button_state(self) -> None:
+        """按当前品种是否已收藏同步 ★/☆ 按钮外观."""
+        btn = getattr(self, "_fav_btn", None)
+        if btn is None:
+            return
+        if self._is_current_symbol_favorite():
+            btn.setText("★")
+            btn.setToolTip("已收藏（点击取消收藏）")
+        else:
+            btn.setText("☆")
+            btn.setToolTip("收藏当前品种\n收藏的品种固定显示在下拉列表顶部")
+
+    def _on_toggle_favorite_symbol(self) -> None:
+        """★ 按钮切换当前品种的收藏状态并持久化."""
+        settings = getattr(self._ctx, "settings", None)
+        sym = self._symbol_combo.currentText().strip()
+        if not sym:
+            self._status_bar.showMessage("请先输入品种代码再收藏")
+            return
+        if settings is None:
+            self._status_bar.showMessage("设置不可用，无法收藏")
+            return
+
+        favorites = self._favorite_symbols()
+        if sym in favorites:
+            favorites.remove(sym)
+            msg = f"已取消收藏 {sym}"
+        else:
+            favorites.append(sym)
+            msg = f"已收藏 {sym}（下拉列表置顶显示）"
+        try:
+            settings.general.favorite_symbols = favorites
+            from pa_agent.config.settings import save_settings
+
+            save_settings(settings)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("save favorite_symbols failed: %s", exc)
+
+        self._populate_symbol_combo_for_source()
+        self._update_favorite_button_state()
+        self._status_bar.showMessage(msg)
 
     def _on_refresh_symbol_list(self) -> None:
         """重新读取通达信自选股并刷新股票下拉列表."""
@@ -1175,6 +1255,7 @@ class MainWindow(QMainWindow):
 
     def _on_symbol_combo_text_changed(self, _text: str = "") -> None:
         """Debounce symbol edits so partial codes (00→600519) do not spam subscribe."""
+        self._update_favorite_button_state()
         sym = self._symbol_combo.currentText()
         tf = self._tf_combo.currentText()
         # A 股源（tdx/akshare）：代码未输完整时不排队切换，避免每次击键
@@ -1209,11 +1290,14 @@ class MainWindow(QMainWindow):
         self._on_symbol_or_tf_changed(pending[0], pending[1])
 
     def _status_message_after_symbol_switch(self, symbol: str, timeframe: str) -> str:
-        """Status bar text after symbol/tf change (TV shows resolved feed, not raw typing)."""
+        """Status bar text after symbol/tf change (提示需点击「获取数据」才拉取)."""
         if self._current_data_source_kind() == "tradingview":
             ex_show = self._tv_exchange_text() or "自动"
-            return f"TradingView 正在拉取 {ex_show}:{symbol.strip()} {timeframe}…"
-        return f"已切换至 {symbol} {timeframe}"
+            return (
+                f"TradingView 已切换至 {ex_show}:{symbol.strip()} {timeframe}，"
+                "点击「获取数据」拉取"
+            )
+        return f"已切换至 {symbol} {timeframe}，点击「获取数据」拉取行情"
 
     def _update_symbol_data_alert(self) -> None:
         """Show hints when the symbol is unavailable (MT5) or source disconnected."""
@@ -1760,6 +1844,10 @@ class MainWindow(QMainWindow):
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("unsubscribe failed: %s", exc)
             self._last_frame_ready_bars = None
+            # 旧品种的 forming bar 时间戳对新品种无意义；不清空会让
+            # 「等待收盘」倒计时基于旧 K 线计算（换周期时对不齐），
+            # 且切换后不再自动拉取，没有新数据来纠正它。
+            self._last_forming_ts_open = None
             self._incremental_available = False
             if hasattr(self, "_submit_btn"):
                 self._submit_btn.setText("提交分析")
@@ -1827,12 +1915,9 @@ class MainWindow(QMainWindow):
                 self._update_wait_close_countdown_display()
             self._refresh_chart_once()
 
-            # Auto-restart the refresh loop so data arrives immediately after a
-            # symbol/timeframe switch without requiring the user to click
-            # "获取数据" again.
-            data_source = getattr(self._ctx, "data_source", None)
-            if data_source is not None and getattr(data_source, "_connected", False):
-                self._start_refresh_loop()
+            # 切换品种/周期不自动拉取行情：输入时只更新本地订阅与界面，
+            # 用户点击「获取数据」后才启动 RefreshLoop 发起请求（避免
+            # 每次击键完成都触发完整请求周期，也避免 TDX 连接风暴）。
 
             # Check for prior analysis record — if found, show a hint in the
             # status bar but do NOT auto-trigger analysis; the user decides
@@ -2510,7 +2595,6 @@ class MainWindow(QMainWindow):
             "_decision_tree_panel",
             "_decision_flow_viz_panel",
             "_decision_panel",
-            "_future_trend_panel",
         ):
             w = getattr(self, name, None)
             if w is not None:
@@ -3130,12 +3214,6 @@ class MainWindow(QMainWindow):
         """
         if decision:
             inner = decision.get("decision", decision)
-            # Carry next_bar_prediction from top-level into inner dict
-            # so DecisionPanel._apply_next_bar_prediction can find it.
-            if "next_bar_prediction" in decision and "next_bar_prediction" not in inner:
-                inner = {**inner, "next_bar_prediction": decision["next_bar_prediction"]}
-            if "next_cycle_prediction" in decision and "next_cycle_prediction" not in inner:
-                inner = {**inner, "next_cycle_prediction": decision["next_cycle_prediction"]}
             self._chart_widget.set_decision(inner)
             if getattr(self, "_demo_mode", False):
                 self._chart_widget.fit_view()
@@ -3148,7 +3226,6 @@ class MainWindow(QMainWindow):
                 stage1_diagnosis=self._last_stage1_diagnosis,
                 decision_stance=stance,
             )
-            self._future_trend_panel.set_prediction(inner)
             self._bind_decision_tree(decision, self._last_stage1_diagnosis)
             order = inner.get("order_type", "—")
             self._decision_badge.setText(f"决策: {order}")
@@ -3179,14 +3256,6 @@ class MainWindow(QMainWindow):
                 cur_cycle = diag.get("cycle_position") or ""
                 cur_cycle_zh = _cycle_map.get(cur_cycle, cur_cycle or "—")
 
-                # Next cycle: pick the highest-probability from next_cycle_prediction
-                next_cycle_zh = "—"
-                ncp = decision.get("next_cycle_prediction") or {}
-                probs = ncp.get("probabilities") or {}
-                if probs:
-                    best_key = max(probs, key=lambda k: probs[k])
-                    next_cycle_zh = _cycle_map.get(best_key, best_key)
-
                 # Current trend from diagnosis_summary.direction
                 _trend_map = {
                     "bullish": "上涨",
@@ -3199,7 +3268,6 @@ class MainWindow(QMainWindow):
                 metrics: dict[str, str] = {
                     "当前趋势": cur_trend_zh,
                     "当前市场周期": cur_cycle_zh,
-                    "下一个市场周期": next_cycle_zh,
                     "支撑区": "—",
                     "阻力区": "—",
                 }
@@ -3234,7 +3302,6 @@ class MainWindow(QMainWindow):
             self._chart_widget.clear_decision_overlay()
             self._chart_widget.clear_support_resistance()
             self._decision_panel.clear()
-            self._future_trend_panel.clear()
             self._decision_tree_panel.clear()
             if getattr(self, "_decision_flow_viz_panel", None) is not None:
                 self._decision_flow_viz_panel.clear()
@@ -3254,7 +3321,13 @@ class MainWindow(QMainWindow):
 
         parts: list[str] = []
         stage = exc_info.get("stage", "")
-        if stage == "stage2":
+        if exc_info.get("type") == "network_error":
+            parts.append(
+                "【说明】本次失败是网络中断（流式响应中途被对端断开/超时），"
+                "与提示词/模型输出无关；系统已自动重试仍失败。"
+                "请检查网络/代理/API 网关后直接重新「提交分析」，无需修改提示词。\n"
+            )
+        elif stage == "stage2":
             parts.append(
                 "【说明】阶段二校验失败后不会自动重试 API；"
                 "请根据下方信息修改提示词/模型输出或手动重新「提交分析」。\n"
@@ -3505,11 +3578,6 @@ class MainWindow(QMainWindow):
         s2_full = getattr(record, "stage2_decision", None)
         if s2_full:
             inner = s2_full.get("decision", s2_full)
-            # Carry next_bar_prediction from top-level into inner dict
-            if "next_bar_prediction" in s2_full and "next_bar_prediction" not in inner:
-                inner = {**inner, "next_bar_prediction": s2_full["next_bar_prediction"]}
-            if "next_cycle_prediction" in s2_full and "next_cycle_prediction" not in inner:
-                inner = {**inner, "next_cycle_prediction": s2_full["next_cycle_prediction"]}
             meta = getattr(record, "meta", None)
             stance = getattr(meta, "decision_stance", None) if meta is not None else None
             self._decision_panel.set_decision(
@@ -3518,7 +3586,6 @@ class MainWindow(QMainWindow):
                 stage1_diagnosis=s1_diag if isinstance(s1_diag, dict) else None,
                 decision_stance=stance,
             )
-            self._future_trend_panel.set_prediction(inner)
             self._bind_decision_tree(
                 s2_full,
                 s1_diag if isinstance(s1_diag, dict) else None,
@@ -3823,35 +3890,38 @@ class MainWindow(QMainWindow):
             self._ai_mode_label.setText("")
             return
         p = settings.provider
+        # 前缀显示当前使用的 API 配置方案名（多方案切换的可见反馈）
+        profile_name = str(getattr(settings, "active_provider_name", "") or "")
+        prefix = f"[{profile_name}] " if profile_name else ""
         base = (p.base_url or "").lower()
         if "deepseek.com" in base:
             thinking = "开" if p.thinking else "关"
             self._ai_mode_label.setText(
-                f"思考: {thinking} · effort={p.reasoning_effort} · {p.model}"
+                f"{prefix}思考: {thinking} · effort={p.reasoning_effort} · {p.model}"
             )
         elif "kkone.vip" in base:
             thinking = "开" if p.thinking else "关"
             effort = p.reasoning_effort if p.thinking else "—"
             self._ai_mode_label.setText(
-                f"KKAI 思考: {thinking} · budget≈{effort} · {p.model}"
+                f"{prefix}KKAI 思考: {thinking} · budget≈{effort} · {p.model}"
             )
         elif "yunwu.ai" in base:
             thinking = "开" if p.thinking else "关"
             effort = p.reasoning_effort if p.thinking else "—"
             mode = "adaptive" if "opus-4-7" in p.model or "opus-4-6" in p.model else "effort"
             self._ai_mode_label.setText(
-                f"云雾 思考: {thinking} · {mode}={effort} · {p.model}"
+                f"{prefix}云雾 思考: {thinking} · {mode}={effort} · {p.model}"
             )
         elif "packyapi.com" in base:
             thinking = "开" if p.thinking else "关"
             effort = p.reasoning_effort if p.thinking else "—"
             mode = "adaptive" if "opus-4-7" in p.model or "opus-4-6" in p.model else "effort"
             self._ai_mode_label.setText(
-                f"PackyAPI 思考: {thinking} · {mode}={effort} · {p.model}"
+                f"{prefix}PackyAPI 思考: {thinking} · {mode}={effort} · {p.model}"
             )
         else:
             self._ai_mode_label.setText(
-                f"模型: {p.model} · 思考={('开' if p.thinking else '关')}"
+                f"{prefix}模型: {p.model} · 思考={('开' if p.thinking else '关')}"
             )
 
     # ── Helpers ───────────────────────────────────────────────────────────────
